@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Web.RestApi/Web.RestApi.csproj" />
+  </Folder>
+  <Folder Name="/src/aspire/">
+    <Project Path="src/aspire/Aspire.AppHost/Aspire.AppHost.csproj" Id="103a5261-5f9d-4697-b9a0-db294b5252a3" />
+    <Project Path="src/aspire/Aspire.ServiceDefaults/Aspire.ServiceDefaults.csproj" />
+  </Folder>
+</Solution>
