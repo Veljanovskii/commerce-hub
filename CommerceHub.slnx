@@ -5,10 +5,14 @@
     <File Path="Directory.Packages.props" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Application/Application.csproj" />
+    <Project Path="src/Domain/Domain.csproj" />
+    <Project Path="src/Infrastructure/Infrastructure.csproj" />
+    <Project Path="src/SharedKernel/SharedKernel.csproj" />
     <Project Path="src/Web.RestApi/Web.RestApi.csproj" />
   </Folder>
   <Folder Name="/src/aspire/">
-    <Project Path="src/aspire/Aspire.AppHost/Aspire.AppHost.csproj" Id="103a5261-5f9d-4697-b9a0-db294b5252a3" />
-    <Project Path="src/aspire/Aspire.ServiceDefaults/Aspire.ServiceDefaults.csproj" />
+    <Project Path="src/Aspire.AppHost/Aspire.AppHost.csproj" />
+    <Project Path="src/Aspire.ServiceDefaults/Aspire.ServiceDefaults.csproj" />
   </Folder>
 </Solution>
