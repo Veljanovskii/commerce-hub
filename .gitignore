@@ -3,6 +3,9 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# Temporary NuGet package folders
+.tmp-packages/
+
 # User-specific files
 *.rsuser
 *.suo
