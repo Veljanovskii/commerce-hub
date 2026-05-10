@@ -414,3 +414,7 @@ dotnet_diagnostic.S6605.severity = none
 
 # S6781: JWT secret keys should not be disclosed
 dotnet_diagnostic.S6781.severity = none
+
+# Sonar - Disable S1144 for decorator files
+[*Decorator.cs]
+dotnet_diagnostic.S1144.severity = none
