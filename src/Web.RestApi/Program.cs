@@ -1,8 +1,6 @@
 using System.Reflection;
-using System.Security.Cryptography;
 using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Web.RestApi;
 using Web.RestApi.Extensions;
 using Web.Api;
 using Application;
