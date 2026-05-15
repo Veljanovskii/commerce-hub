@@ -18,4 +18,10 @@
 		<ProjectReference Include="..\SharedKernel\SharedKernel.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+	  <Folder Include="Todos\Complete\" />
+	  <Folder Include="Users\Login\" />
+	  <Folder Include="Users\Register\" />
+	</ItemGroup>
+
 </Project>

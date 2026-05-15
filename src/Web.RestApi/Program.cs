@@ -1,25 +1,29 @@
 using System.Reflection;
 using HealthChecks.UI.Client;
+using Infrastructure.Seeding;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Web.RestApi.Extensions;
 using Web.Api;
 using Application;
 using Infrastructure;
+using Web.Shared;
+using Web.Shared.Interceptors;
+using Web.Shared.Middleware;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 
-builder.Services.AddSwaggerGenWithAuth();
-
 builder.Services
     .AddApplication()
     .AddPresentation()
-    .AddInfrastructure(builder.Configuration);
+    .AddInfrastructure(builder.Configuration)
+    .AddCommerceHubObservability("CommerceHub.RestApi");
+
+builder.Services.AddSingleton<IInterceptor, BackendCallCountingInterceptor>();
 
 builder.Services.AddEndpoints(Assembly.GetExecutingAssembly());
-
-//builder.Services.AddOpenApi();
 
 WebApplication app = builder.Build();
 
@@ -29,29 +33,22 @@ app.MapEndpoints();
 
 if (app.Environment.IsDevelopment())
 {
-    //app.MapOpenApi();
     app.UseSwaggerWithUi();
 
     app.ApplyMigrations();
+    DataSeeder.SeedData(app.Services);
 }
-
-//app.UseHttpsRedirection();
 
 app.MapHealthChecks("health", new HealthCheckOptions
 {
     ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
 });
 
+app.UseMiddleware<PayloadSizeMiddleware>();
+
 app.UseRequestContextLogging();
 
 app.UseExceptionHandler();
-
-app.UseAuthentication();
-
-app.UseAuthorization();
-
-// REMARK: If you want to use Controllers, you'll need this.
-app.MapControllers();
 
 await app.RunAsync();
 

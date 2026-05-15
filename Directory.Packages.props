@@ -6,12 +6,17 @@
   <ItemGroup>
     <!-- Static code analysis -->
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.3.0" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageVersion>
     <PackageVersion Include="Microsoft.OpenApi" Version="2.4.1" />
     <PackageVersion Include="SonarAnalyzer.CSharp" Version="10.25.0.139117" />
     <!-- Application -->
     <PackageVersion Include="Scrutor" Version="7.0.0" />
     <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.7" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.4" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.4" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
     <!-- Infrastructure -->
     <PackageVersion Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
@@ -22,8 +27,11 @@
     <!-- Web.Api -->
     <PackageVersion Include="AspNetCore.HealthChecks.UI.Client" Version="9.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.7" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.7" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.4" />
     <PackageVersion Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
+    <!-- Web.GraphQLApi -->
+    <PackageVersion Include="HotChocolate.AspNetCore" Version="16.0.2" />
+    <PackageVersion Include="HotChocolate.Data.EntityFramework" Version="16.0.2" />
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.1.7" />
     <!-- ArchitectureTests -->
     <PackageVersion Include="Shouldly" Version="4.3.0" />
@@ -41,5 +49,8 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.1" />
     <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.2" />
+    <!-- Benchmarks -->
+    <PackageVersion Include="NBomber" Version="6.4.0" />
+    <PackageVersion Include="NBomber.Http" Version="6.2.0" />
   </ItemGroup>
 </Project>
