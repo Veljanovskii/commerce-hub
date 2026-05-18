@@ -1,4 +1,4 @@
-﻿using Infrastructure.Database;
+using Infrastructure.Database;
 using Microsoft.EntityFrameworkCore;
 
 namespace Web.RestApi.Extensions;
@@ -13,5 +13,10 @@ public static class MigrationExtensions
             scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         dbContext.Database.Migrate();
+
+        SeedDataGenerator seedDataGenerator =
+            scope.ServiceProvider.GetRequiredService<SeedDataGenerator>();
+
+        seedDataGenerator.GenerateAsync().GetAwaiter().GetResult();
     }
 }

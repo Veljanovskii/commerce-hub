@@ -1,6 +1,7 @@
-﻿using Application.Abstractions.Data;
-using Domain.Todos;
-using Domain.Users;
+using Application.Abstractions.Data;
+using Domain.Catalog;
+using Domain.Customers;
+using Domain.Orders;
 using Infrastructure.DomainEvents;
 using Microsoft.EntityFrameworkCore;
 using SharedKernel;
@@ -12,9 +13,12 @@ public sealed class ApplicationDbContext(
     IDomainEventsDispatcher domainEventsDispatcher)
     : DbContext(options), IApplicationDbContext
 {
-    public DbSet<User> Users { get; set; }
-
-    public DbSet<TodoItem> TodoItems { get; set; }
+    public DbSet<Product> Products { get; set; }
+    public DbSet<Category> Categories { get; set; }
+    public DbSet<Supplier> Suppliers { get; set; }
+    public DbSet<Order> Orders { get; set; }
+    public DbSet<OrderItem> OrderItems { get; set; }
+    public DbSet<Customer> Customers { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

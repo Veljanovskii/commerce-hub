@@ -1,4 +1,5 @@
-﻿using System.Windows.Input;
+using System.Diagnostics;
+using System.Windows.Input;
 using Application.Abstractions.Messaging;
 using Microsoft.Extensions.Logging;
 using SharedKernel;
@@ -23,6 +24,9 @@ internal static class LoggingDecorator
                 logger.LogInformation("Processing command {Command}", commandName);
             }
 
+            using Activity? activity = Activity.Current?.Source.StartActivity(commandName);
+            activity?.SetTag("messaging.command.name", commandName);
+
             Result<TResponse> result = await innerHandler.Handle(command, cancellationToken);
 
             if (result.IsSuccess)
@@ -42,6 +46,8 @@ internal static class LoggingDecorator
                 {
                     logger.LogError("Completed command {Command} with error", commandName);
                 }
+
+                activity?.SetStatus(ActivityStatusCode.Error, result.Error.Code);
             }
 
             return result;
@@ -63,6 +69,9 @@ internal static class LoggingDecorator
                 logger.LogInformation("Processing command {Command}", commandName);
             }
 
+            using Activity? activity = Activity.Current?.Source.StartActivity(commandName);
+            activity?.SetTag("messaging.command.name", commandName);
+
             Result result = await innerHandler.Handle(command, cancellationToken);
 
             if (result.IsSuccess)
@@ -82,6 +91,8 @@ internal static class LoggingDecorator
                 {
                     logger.LogError("Completed command {Command} with error", commandName);
                 }
+
+                activity?.SetStatus(ActivityStatusCode.Error, result.Error.Code);
             }
 
             return result;
@@ -103,6 +114,9 @@ internal static class LoggingDecorator
                 logger.LogInformation("Processing query {Query}", queryName);
             }
 
+            using Activity? activity = Activity.Current?.Source.StartActivity(queryName);
+            activity?.SetTag("messaging.query.name", queryName);
+
             Result<TResponse> result = await innerHandler.Handle(query, cancellationToken);
 
             if (result.IsSuccess)
@@ -122,6 +136,8 @@ internal static class LoggingDecorator
                 {
                     logger.LogError("Completed query {Query} with error", queryName);
                 }
+
+                activity?.SetStatus(ActivityStatusCode.Error, result.Error.Code);
             }
 
             return result;

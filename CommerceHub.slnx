@@ -10,9 +10,14 @@
     <Project Path="src/Infrastructure/Infrastructure.csproj" />
     <Project Path="src/SharedKernel/SharedKernel.csproj" />
     <Project Path="src/Web.RestApi/Web.RestApi.csproj" />
+    <Project Path="src/Web.GraphQLApi/Web.GraphQLApi.csproj" />
   </Folder>
   <Folder Name="/src/aspire/">
     <Project Path="src/Aspire.AppHost/Aspire.AppHost.csproj" />
     <Project Path="src/Aspire.ServiceDefaults/Aspire.ServiceDefaults.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="src/Benchmarks/Benchmarks.csproj" />
+  </Folder>
 </Solution>
+

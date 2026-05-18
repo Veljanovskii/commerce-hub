@@ -7,7 +7,10 @@ IResourceBuilder<PostgresDatabaseResource> database = builder
     .AddDatabase("commerce-hub");
 
 builder.AddProject<Projects.Web_RestApi>("web-restapi")
-    .WithEnvironment("ConnectionStrings__Database", database)
+    .WithReference(database)
+    .WaitFor(database);
+
+builder.AddProject<Projects.Web_GraphQLApi>("web-graphqlapi")
     .WithReference(database)
     .WaitFor(database);
 

@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using Application.Abstractions.Authentication;
 using Application.Abstractions.Data;
 using Infrastructure.Authentication;
@@ -49,6 +49,8 @@ public static class DependencyInjection
                 .UseSnakeCaseNamingConvention());
 
         services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<ApplicationDbContext>());
+
+        services.AddTransient<SeedDataGenerator>();
 
         return services;
     }
