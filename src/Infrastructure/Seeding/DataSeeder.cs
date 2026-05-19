@@ -15,7 +15,7 @@ public static class DataSeeder
         using IServiceScope scope = serviceProvider.CreateScope();
         ApplicationDbContext dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        if (dbContext.Products.Any())
+        if (dbContext.Products.Any() || dbContext.Customers.Any())
         {
             return;
         }
@@ -139,5 +139,6 @@ public static class DataSeeder
         dbContext.Orders.AddRange(orders);
 
         dbContext.SaveChanges();
+
     }
 }

@@ -16,14 +16,12 @@ public static class ObservabilityExtensions
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddSource(CommerceHubDiagnostics.ApplicationSource.Name)
-                .AddSource(CommerceHubDiagnostics.InfrastructureSource.Name)
-                .AddOtlpExporter())
+                .AddSource(CommerceHubDiagnostics.InfrastructureSource.Name))
             .WithMetrics(metrics => metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
-                .AddMeter("CommerceHub.Metrics")
-                .AddOtlpExporter());
+                .AddMeter("CommerceHub.Metrics"));
 
         return services;
     }

@@ -51,7 +51,8 @@ if (app.Environment.IsDevelopment())
     DataSeeder.SeedData(app.Services);
 }
 
-app.MapGraphQL();
+app.MapGraphQL()
+    .WithOptions(o => o.Tool.Enable = app.Environment.IsDevelopment());
 
 app.UseWebSockets();
 
