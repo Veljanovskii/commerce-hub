@@ -2,6 +2,7 @@ using Application.Abstractions.Data;
 using Application.Abstractions.Messaging;
 using Application.Orders.GetHistory;
 using Application.Products.GetHistory;
+using Domain.Customers;
 using Domain.Orders;
 using Domain.Products;
 using Microsoft.EntityFrameworkCore;
@@ -15,6 +16,23 @@ public class Query
     [UseSorting]
     public IQueryable<Product> GetProducts([Service] IApplicationDbContext dbContext) =>
         dbContext.Products.AsNoTracking();
+
+    [UseFiltering]
+    [UseSorting]
+    public IQueryable<Product> GetProductsWithDetails([Service] IApplicationDbContext dbContext) =>
+        dbContext.Products.AsNoTracking();
+
+    [UseProjection]
+    [UseFiltering]
+    [UseSorting]
+    public IQueryable<Order> GetOrders([Service] IApplicationDbContext dbContext) =>
+        dbContext.Orders.AsNoTracking();
+
+    [UseProjection]
+    [UseFiltering]
+    [UseSorting]
+    public IQueryable<Customer> GetCustomers([Service] IApplicationDbContext dbContext) =>
+        dbContext.Customers.AsNoTracking();
 
     public async Task<Product?> GetProductById(
         Guid id,

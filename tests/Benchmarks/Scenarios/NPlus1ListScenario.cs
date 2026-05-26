@@ -17,8 +17,8 @@ public static class NPlus1ListScenario
     public static ScenarioProps GraphQLScenario(HttpClient client) =>
         Scenario.Create("graphql_n_plus_1_list", async context =>
         {
-            // GraphQL: get 50 products with nested category and stock items with supplier
-            string body = """{"query":"{ products(take: 50) { items { id name sku price category { id name } stockItems { supplierId supplier { id name } quantityOnHand } } } }"}""";
+            // GraphQL: get all products with nested category and stock items with supplier (uses DataLoaders)
+            string body = """{"query":"{ productsWithDetails { id name sku price category { id name } stockItems { supplierId supplier { id name } quantityOnHand } } }"}""";
             HttpRequestMessage request = Http.CreateRequest("POST", $"{Config.GraphQLBaseUrl}/graphql")
                 .WithHeader("Content-Type", "application/json")
                 .WithBody(new StringContent(body, System.Text.Encoding.UTF8, "application/json"));

@@ -1,398 +1,307 @@
-# CommerceHub — A Fair Testing Bed for REST vs GraphQL
+﻿# CommerceHub
 
-> A .NET 10 reference application designed to **scientifically compare** two web API styles —
-> **REST** (Minimal APIs) and **GraphQL** (HotChocolate) — over **identical business logic**.
->
-> Built as the experimental platform for a master's/PhD-level research paper on API design trade-offs.
+A .NET 10 Aspire application built as the experimental platform for a **master's thesis** comparing **REST (Minimal APIs)** and **GraphQL (HotChocolate)** web API styles over identical business logic.
 
----
-
-## Table of Contents
-
-1. [Why this project exists](#1-why-this-project-exists)
-2. [The big idea: fairness as a first-class concern](#2-the-big-idea-fairness-as-a-first-class-concern)
-3. [What is being compared, exactly?](#3-what-is-being-compared-exactly)
-4. [High-level architecture](#4-high-level-architecture)
-5. [The domain — a small e-commerce world](#5-the-domain--a-small-e-commerce-world)
-6. [Solution structure](#6-solution-structure)
-7. [How REST and GraphQL share the same brain](#7-how-rest-and-graphql-share-the-same-brain)
-8. [Observability: how we *see* what's happening](#8-observability-how-we-see-whats-happening)
-9. [Benchmark scenarios](#9-benchmark-scenarios)
-10. [How to run it](#10-how-to-run-it)
-11. [How to read the results](#11-how-to-read-the-results)
-12. [Bonus: PostgreSQL temporal tables](#12-bonus-postgresql-temporal-tables)
-13. [Known asymmetries](#13-known-asymmetries)
+> Stack: .NET 10 · Aspire · HotChocolate 16 · EF Core 10 · PostgreSQL 17 · OpenTelemetry · NBomber
 
 ---
 
-## 1. Why this project exists
+## Motivation
 
-If you search the web for *"REST vs GraphQL — which is faster?"* you'll get a thousand contradictory answers. Most of them are biased because:
-
-- The REST API was built by someone who likes REST, the GraphQL API by someone who likes GraphQL.
-- They run against different databases, different machines, or different business rules.
-- The benchmark measures the wrong thing (cold-start latency, a single request, no warm-up).
-
-This project removes those biases. **The same Domain, Application and Infrastructure layers power both APIs.** The only thing that changes is the *transport* — the thin layer that translates HTTP requests into method calls.
-
-This way, every measured difference is attributable to the API style itself, not to accidental implementation differences.
+The thesis investigates measurable differences between REST and GraphQL when both operate on the same domain, same database, and same runtime. Most existing comparisons are unreliable because the two APIs are built by different teams, against different data, with different optimisation efforts. CommerceHub eliminates those variables by making the two API layers **thin transports over a single shared core**.
 
 ---
 
-## 2. The big idea: fairness as a first-class concern
+## Fairness guarantees
+
+The comparison is meaningful only if the playing field is level. These constraints are enforced structurally:
+
+- Both APIs share the same `Domain`, `Application`, and `Infrastructure` projects -- zero duplicated logic.
+- Both connect to the same PostgreSQL instance with the same EF Core configuration (`AsNoTracking` on all reads).
+- Both run as separate Aspire resources on the same Kestrel/.NET 10 runtime.
+- Both export telemetry through the same OpenTelemetry pipeline to the Aspire Dashboard.
+- Functionally equivalent operations (same inputs, same outputs, same validation rules).
+- No authentication -- it would introduce a transport-specific variable unrelated to the comparison.
+- Any unavoidable asymmetry is documented (see [Known asymmetries](#known-asymmetries)).
+
+---
+
+## Architecture
+
+The system is orchestrated locally by .NET Aspire. The `Aspire.AppHost` project starts a PostgreSQL container and both API projects as separate resources. Both APIs receive their connection string from Aspire and export OpenTelemetry (OTLP) signals to the Aspire Dashboard.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Domain  +  Application  +  Infrastructure  (shared)    │
-│  └─ Entities, business rules, EF Core, DB queries       │
-└────────────┬────────────────────────┬───────────────────┘
-             │                        │
-             ▼                        ▼
-   ┌─────────────────┐       ┌─────────────────┐
-   │  Web.RestApi    │       │  Web.GraphQLApi │
-   │  (Minimal APIs) │       │  (HotChocolate) │
-   └─────────────────┘       └─────────────────┘
-             │                        │
-             └────────┬───────────────┘
-                      ▼
-              same PostgreSQL DB
-              same OpenTelemetry pipeline
-              same Aspire host
-              same .NET 10 runtime
++------------------------------------------------------------------+
+|                         Aspire AppHost                            |
+|                                                                  |
+|  +--------------+     +---------------+     +-----------------+  |
+|  |  PostgreSQL  |<----|  Web.RestApi   |     | Web.GraphQLApi  |  |
+|  |              |<----|               |     |                 |  |
+|  +--------------+     +-------+-------+     +--------+--------+  |
+|                               |                      |           |
+|                               |  OTLP                |  OTLP     |
+|                               v                      v           |
+|                     +--------------------------------+           |
+|                     |       Aspire Dashboard         |           |
+|                     |   (traces, metrics, logs)      |           |
+|                     +--------------------------------+           |
++------------------------------------------------------------------+
 ```
 
-**Fairness rules** (enforced by structure, not just convention):
+Internally, both APIs call into the same application layer:
 
-- ✅ Shared `Domain` / `Application` / `Infrastructure` layers — no duplicated business logic.
-- ✅ Same database instance, same EF Core configuration (`AsNoTracking`, same migrations).
-- ✅ Same Kestrel host, same container base image (`mcr.microsoft.com/dotnet/aspnet:10.0`).
-- ✅ Same OpenTelemetry pipeline exporting to the same backend.
-- ✅ Functionally equivalent operations (same inputs, same outputs, same validation).
-- ✅ Same HTTP version, same compression, same warm-up period.
-- ✅ Any unavoidable asymmetry is **documented**, not hidden.
+```
+HTTP Request                            GraphQL Query
+     |                                       |
+     v                                       v
++--------------+                     +------------------+
+| REST Endpoint|                     | GraphQL Resolver |
+| (Minimal API)|                     |  (HotChocolate)  |
++------+-------+                     +--------+---------+
+       |                                      |
+       |    IQueryHandler / ICommandHandler    |
+       +------------------+-------------------+
+                          v
+              +------------------------+
+              |   Application Layer    |
+              |  (CQRS handlers, DTOs) |
+              +-----------+------------+
+                          v
+              +------------------------+
+              |  Infrastructure Layer  |
+              |   (EF Core, DbContext) |
+              +-----------+------------+
+                          v
+                     PostgreSQL
+```
 
 ---
 
-## 3. What is being compared, exactly?
+## Domain model
 
-Three dimensions:
+The domain models a small **product ordering system** -- chosen because it produces naturally graph-shaped data where GraphQL's advantages (fewer round-trips, reduced over-fetching) should be most visible.
 
-| Dimension | What we measure | Why it matters |
+### Entity relationship diagram
+
+```
++------------------+         +----------------------+
+|     Category     |         |       Supplier       |
++------------------+         +----------------------+
+| Id: Guid         |<--+     | Id: Guid             |
+| Name: string     |   |     | Name: string         |
+| ParentCategoryId |---+     | ContactEmail: string |
+| ParentCategory?  | self-   | ContactPhone: string |
+| SubCategories[]  | ref     +----------+-----------+
+| Products[]       |                    |
++--------+---------+                    | supplies
+         | categorises                  |
+         v                              v
++----------------------+     +----------------------+
+|       Product        |     |      StockItem       |
++----------------------+     +----------------------+
+| Id: Guid             |<----| Id: Guid             |
+| Name: string         |     | ProductId: Guid      |
+| Sku: string          |     | SupplierId: Guid     |
+| Description: string  |     | QuantityOnHand: int  |
+| Price: decimal       |     | ReorderLevel: int    |
+| CategoryId: Guid     |     +----------------------+
+| StockItems[]         |
++----------+-----------+
+           | ordered in
+           v
++----------------------+     +----------------------+
+|      OrderLine       |     |       Customer       |
++----------------------+     +----------------------+
+| Id: Guid             |     | Id: Guid             |
+| OrderId: Guid        |     | Name: string         |
+| ProductId: Guid      |     | Email: string        |
+| Quantity: int        |     | Addresses[]          |
+| UnitPriceAtOrder:    |     +----------+-----------+
+|   decimal            |                | places
++----------+-----------+                |
+           | belongs to                 v
+           v                 +----------------------+
++----------------------+     |        Order         |
+|       Address        |     +----------------------+
++----------------------+     | Id: Guid             |
+| Id: Guid             |     | CustomerId: Guid     |
+| CustomerId: Guid     |     | Status: OrderStatus  |
+| Street: string       |     | PlacedAt: DateTime   |
+| City: string         |     | Total: decimal       |
+| PostalCode: string   |     | OrderLines[]         |
+| Country: string      |     +----------------------+
++----------------------+
+
+OrderStatus: Pending | Confirmed | Shipped | Delivered | Cancelled
+```
+
+### Key graph paths exploited in benchmarks
+
+- `Order -> Customer -> Addresses`
+- `Order -> OrderLines -> Product -> Category -> ParentCategory`
+- `Product -> StockItems -> Supplier`
+
+These multi-level paths are where GraphQL's single-request nested fetching and DataLoader batching are hypothesised to outperform REST's multiple calls or over-fetched deep includes.
+
+---
+
+## Data seeding
+
+The database is seeded on first startup (only if the `Products` and `Customers` tables are empty). The seeding is deterministic in structure but uses `Guid.NewGuid()` for IDs.
+
+| Entity | Count | Generation logic |
 |---|---|---|
-| **Performance** | average latency, p50, p95, p99, throughput (RPS) | How fast does the user perceive the app? |
-| **Data transfer** | response payload size, number of backend calls per request | How much bandwidth and DB pressure does each style cause? |
-| **Observability** | spans per scenario, log events, trace path | How easy is it to diagnose a problem in production? |
+| **Categories** | 7 | 3 root categories (`Electronics`, `Clothing`, `Home & Garden`) + 4 children (`Computers`, `Phones`, `Men's Clothing`, `Women's Clothing`) |
+| **Suppliers** | 5 | Named `Supplier 1`–`5` with generated contact info |
+| **Products** | 50 | Named `Product 1`–`50`, each assigned a category by round-robin over `[Computers, Computers, Phones, Phones, Men's, Women's, Home]`. Price = `10 + i * 3.5` |
+| **StockItems** | ~67 | Every product gets 1 stock item (supplier assigned round-robin). Every 3rd product gets a second stock item from the next supplier |
+| **Customers** | 10 | Each with 1 address |
+| **Orders** | 20 | Distributed across customers round-robin. Each order has 1–4 lines (cycling). Products selected by `(i * 3 + j) % 50`. Status cycles through all `OrderStatus` values. Dates span the last 20 days |
 
-Each dimension is captured automatically and exported to NBomber reports + the Aspire Dashboard.
-
----
-
-## 4. High-level architecture
-
-```
-┌────────────────────────── Aspire AppHost ──────────────────────────┐
-│                                                                    │
-│   ┌──────────────┐    ┌─────────────────┐    ┌─────────────────┐   │
-│   │  PostgreSQL  │    │  Web.RestApi    │    │ Web.GraphQLApi  │   │
-│   │   (shared)   │◄───┤  (Minimal APIs) │    │ (HotChocolate)  ├──►│ Seq
-│   └──────────────┘    └────────┬────────┘    └────────┬────────┘   │ (logs)
-│          ▲                     │                      │            │
-│          │                     │  OTLP                │  OTLP      │
-│          │              ┌──────▼──────────────────────▼──────┐     │
-│          └──────────────┤        Aspire Dashboard            │     │
-│                         │  (traces, metrics, logs viewer)    │     │
-│                         └────────────────────────────────────┘     │
-└────────────────────────────────────────────────────────────────────┘
-                                  ▲
-                                  │ HTTP load
-                                  │
-                         ┌────────┴────────┐
-                         │ tests/Benchmarks │
-                         │   (NBomber)     │
-                         └─────────────────┘
-```
-
-- **Aspire** orchestrates everything locally: starts Postgres, both APIs, and Seq.
-- **OpenTelemetry** ships traces and metrics from both APIs to the Aspire Dashboard.
-- **NBomber** is run on demand against the running APIs.
+This gives a dataset large enough to produce realistic query plans and DataLoader batching behaviour, while remaining small enough to run in a local Docker container.
 
 ---
 
-## 5. The domain — a small e-commerce world
+## How both APIs expose the same operations
 
-We picked **product ordering** because it produces nicely *graph-shaped* data. That's the natural habitat where GraphQL's promised advantages (less over-fetching, fewer round-trips) should show up.
+Both API layers call the same `IQueryHandler<TQuery, TResponse>` and `ICommandHandler<TCommand, TResponse>` implementations registered in the Application layer. The CQRS dispatch is hand-rolled (no MediatR) and decorated with logging and FluentValidation.
 
-```
-   Customer ──┐
-              │ places
-              ▼
-            Order ──── OrderLines ──── Product ──── Category ──┐
-                                          │                    │ self-ref
-                                          │                    ▼
-                                          │                ParentCategory
-                                          ▼
-                                      StockItems ──── Supplier
-```
-
-Graph paths to exploit in queries:
-- `Order → Customer → Addresses`
-- `Order → OrderLines → Product → Category → ParentCategory`
-- `Product → StockItems → Supplier`
-
-The database is seeded with **~50 products, 7 categories, 5 suppliers, 10 customers, 20 orders** at startup.
-
----
-
-## 6. Solution structure
-
-```
-commerce-hub/
-├── src/
-│   ├── SharedKernel/                # Result type, Error type, base Entity
-│   ├── Domain/                      # Pure C# entities, no dependencies
-│   │   ├── Products/                # Product, Category
-│   │   ├── Supplies/                # Supplier, StockItem, SupplyOrder
-│   │   ├── Orders/                  # Order, OrderLine, OrderStatus
-│   │   └── Customers/               # Customer, Address
-│   ├── Application/                 # CQRS handlers (hand-rolled, no MediatR)
-│   │   ├── Products/{Queries}       # GetProductById, GetProducts, GetHistory…
-│   │   └── Orders/{Queries,Commands}
-│   ├── Infrastructure/              # EF Core, repositories, DataSeeder
-│   ├── Web.RestApi/                 # Minimal API endpoints
-│   ├── Web.GraphQLApi/              # HotChocolate schema + DataLoaders
-│   ├── Web.Shared/                  # OTel pipeline, middleware, interceptors
-│   ├── Aspire.ServiceDefaults/      # Aspire defaults
-│   └── Aspire.AppHost/              # Orchestration entry point
-├── tests/
-│   ├── Benchmarks/                  # NBomber scenarios
-│   └── *.UnitTests / *.IntegrationTests / *.ArchitectureTests
-├── tools/
-│   └── build-report.ps1             # Aggregates NBomber CSV → report.md
-├── report-template.md
-└── plan.md                          # The research plan / progress log
-```
-
----
-
-## 7. How REST and GraphQL share the same brain
-
-Both APIs **call the same Application-layer query/command handlers**. The transport layer is the *only* difference.
-
-```
-HTTP request                           HTTP request / GraphQL query
-     │                                          │
-     ▼                                          ▼
-┌─────────────┐                          ┌─────────────────┐
-│ REST        │                          │ GraphQL         │
-│ Endpoint    │                          │ Resolver        │
-│ (Minimal    │                          │ (HotChocolate)  │
-│  API)       │                          │                 │
-└──────┬──────┘                          └────────┬────────┘
-       │                                          │
-       │      same IQueryHandler / ICommandHandler│
-       └────────────────────┬─────────────────────┘
-                            ▼
-                  ┌──────────────────────┐
-                  │ Application Handler  │
-                  │ (e.g. GetOrderById)  │
-                  └──────────┬───────────┘
-                             ▼
-                  ┌──────────────────────┐
-                  │ IApplicationDbContext│
-                  │ (EF Core)            │
-                  └──────────┬───────────┘
-                             ▼
-                       PostgreSQL
-```
-
-### Functional parity matrix
-
-Every row of this table is reachable by **both** APIs with semantically identical behaviour:
-
-| # | Operation | REST | GraphQL |
+| # | Operation | REST endpoint | GraphQL operation |
 |---|---|---|---|
-| 1 | Get product by id | `GET /products/{id}` | `query { productById(id) { … } }` |
-| 2 | List products (filter/page) | `GET /products?…` | `query { products(where, order) { … } }` |
-| 3 | Product + category + stock + supplier (deep) | `GET /products/{id}/detail` | Single nested query |
+| 1 | Get product by id | `GET /products/{id}` | `query { productById(id) { ... } }` |
+| 2 | List products (filter/page) | `GET /products?page=&pageSize=` | `query { products(where, order) { ... } }` |
+| 3 | Deep product detail | `GET /products/{id}/detail` | Single nested query on `productById` |
 | 4 | Place order | `POST /orders` | `mutation placeOrder(input)` |
-| 5 | Order detail (customer + lines + products) | `GET /orders/{id}` | Nested `query { orderById(id) { … } }` |
-| 6 | Order status update | `GET /orders/{id}/status` (polling) | `subscription onOrderStatusChanged(id)` |
-| 7 | Temporal history | `GET /orders/{id}/history` | `query { orderHistory(id) { … } }` |
+| 5 | Order detail (customer + lines + products) | `GET /orders/{id}` | `query { orderById(id) { ... } }` |
+| 6 | Order status | `GET /orders/{id}/status` (polling) | `subscription onOrderStatusChanged(id)` |
+| 7 | Product list with deep includes | `GET /products?pageSize=50` (flat DTO) | `query { productsWithDetails { ... } }` |
 
-### Specific choices that keep both sides honest
+**GraphQL-specific optimisations:**
+- **DataLoaders** (`CategoryByIdDataLoader`, `SupplierByIdDataLoader`, `ProductByIdDataLoader`, `StockItemsByProductIdDataLoader`) batch sibling entity fetches to prevent N+1 queries.
+- **Filtering/Sorting** via HotChocolate conventions (`[UseFiltering]`, `[UseSorting]`).
+- **Projection** via `[UseProjection]` on list queries for server-side column selection.
 
-- **CQRS**: hand-rolled `IQueryHandler<,>` and `ICommandHandler<,>` (no MediatR overhead difference between sides).
-- **Validation**: `FluentValidation` in the Application layer — transport-agnostic.
-- **EF Core**: `AsNoTracking()` everywhere on the read side.
-- **GraphQL DataLoaders**: implemented (CategoryById, SupplierById, ProductById, StockItemsByProductId) to prevent N+1. REST's equivalent is `?include=` / `?expand=` deep includes.
-- **Auth**: explicitly **none** — auth would add a transport-specific concern that has nothing to do with the comparison.
-
----
-
-## 8. Observability: how we *see* what's happening
-
-The `Web.Shared` project sets up a single, identical observability pipeline for both APIs:
-
-### Custom telemetry primitives
-
-- **`CommerceHubDiagnostics.ApplicationSource`** — `ActivitySource` for the Application layer.
-- **`CommerceHubDiagnostics.InfrastructureSource`** — `ActivitySource` for the Infrastructure layer.
-- **`commerce_hub.response.bytes`** — Histogram metric for response payload size.
-- **`commerce_hub.backend.calls`** — Counter metric incremented for every EF Core command executed during a request.
-
-### How those metrics get produced
-
-```
-┌─────────────────────┐
-│ Incoming HTTP req   │
-└──────────┬──────────┘
-           │
-           ├──► PayloadSizeMiddleware (REST)
-           │    └─ wraps response stream, emits response.bytes on completion
-           │
-           ├──► HotChocolate diagnostic listener (GraphQL)
-           │    └─ same metric, tagged with the operation name
-           │
-           ▼
-   Application handler runs
-           │
-           ▼
-   EF Core executes SQL
-           │
-           ▼
-  BackendCallCountingInterceptor
-   └─ increments commerce_hub.backend.calls
-```
-
-This means we can answer questions like:
-- *"For a deep order fetch, how many SQL queries does each API actually run?"*
-- *"What's the average byte size of an over-fetch response on REST vs GraphQL?"*
-- *"How much time was spent in the Application layer vs the Infrastructure layer?"*
-
-…all *without* running NBomber. The Aspire Dashboard surfaces them live.
+**REST-specific patterns:**
+- Deep includes via dedicated endpoints (e.g., `/products/{id}/detail` loads category + stock + supplier in a single query with EF `.Include()`).
+- Pagination via `?page=&pageSize=` query parameters.
 
 ---
 
-## 9. Benchmark scenarios
+## Observability
 
-Five scenarios, each one targeted at a hypothesis. Each scenario runs **both** APIs side-by-side under identical load (30s ramp + 60s sustained at 50 RPS).
+Both APIs share a single OpenTelemetry pipeline configured in the `Web.Shared` project. This is **not** used for the benchmark measurements themselves (NBomber handles that), but provides a way to **qualitatively inspect** what each API style does under the hood during development and in the Aspire Dashboard.
 
-| # | Scenario | Hypothesis | Expected winner |
+### What is collected
+
+| Signal | Name | Purpose |
+|---|---|---|
+| Trace | `CommerceHub.Application` ActivitySource | Shows time spent in application handlers |
+| Trace | `CommerceHub.Infrastructure` ActivitySource | Shows time spent in EF Core / DB |
+| Metric | `commerce_hub.response.bytes` (histogram) | Records response payload size per request, tagged by route/operation |
+| Metric | `commerce_hub.backend.calls` (counter) | Counts SQL commands executed per request via an EF Core interceptor |
+
+### How it works
+
+- `PayloadSizeMiddleware` (REST) wraps the response stream and records bytes written on completion.
+- A HotChocolate diagnostic event listener records the same metric for GraphQL, tagged with the operation name.
+- `BackendCallCountingInterceptor` (EF Core `DbCommandInterceptor`) increments the backend calls counter on every `ReaderExecuting` / `NonQueryExecuting` / `ScalarExecuting` event.
+
+This allows answering questions like:
+- *"How many SQL queries does each API actually run for a deep order fetch?"*
+- *"What's the response payload size when REST returns the full DTO vs. GraphQL returning only requested fields?"*
+
+...directly in the Aspire Dashboard without running load tests.
+
+---
+
+## Benchmark scenarios (NBomber)
+
+**[NBomber](https://nbomber.com/)** is a .NET load-testing framework used to drive controlled, reproducible HTTP traffic against both APIs simultaneously and capture latency, throughput, and error metrics.
+
+Each scenario runs both the REST and GraphQL variants under **identical load** -- same RPS, same duration, same ramp profile -- so the results are directly comparable.
+
+*Detailed results and analysis will be provided in `report.md` after benchmark runs.*
+
+| # | Scenario | What it tests | Hypothesis |
 |---|---|---|---|
-| 1 | Simple GET — single product by id | REST has less protocol overhead per request | REST |
-| 2 | Deep graph fetch — order with customer + lines + products + categories | GraphQL collapses multiple round-trips into one | GraphQL |
-| 3 | Over-fetch — only `name` + `price` needed | GraphQL only ships requested fields | GraphQL |
-| 4 | N+1 list — 50 products × category × supplier | GraphQL DataLoader batches sibling fetches | GraphQL |
-| 5 | Write + read-back — place order then deep fetch | Mutation overhead is roughly equal | Neutral |
-
-The point isn't to crown a winner — it's to **measure how big the gap is in each direction** and let the data inform real-world decisions.
+| 1 | **Simple GET** -- single product by id | Baseline per-request overhead | REST is faster (less protocol machinery) |
+| 2 | **Deep graph fetch** -- order with customer, lines, products, categories | Multi-level nested data retrieval | GraphQL faster (single request vs. pre-composed JOIN) |
+| 3 | **Over-fetch** -- client only needs `name` + `price` | Response payload efficiency | GraphQL transfers less data |
+| 4 | **N+1 list** -- all products with category + stock + supplier | DataLoader batching vs. flat DTO | GraphQL's DataLoader reduces backend calls |
+| 5 | **Write + read-back** -- place order then fetch it | Mutation/write overhead comparison | Roughly neutral |
 
 ---
 
-## 10. How to run it
+## Solution layout
 
-### Prerequisites
+```
+src/
+  SharedKernel/            Result<T>, Error, base Entity
+  Domain/                  Pure entities (Products, Supplies, Orders, Customers)
+  Application/             Hand-rolled CQRS handlers, DTOs, FluentValidation
+  Infrastructure/          EF Core DbContext, configurations, DataSeeder, interceptor
+  Web.RestApi/             Minimal API endpoints
+  Web.GraphQLApi/          HotChocolate schema, resolvers, DataLoaders, types
+  Web.Shared/              OTel pipeline, PayloadSizeMiddleware, ActivitySources
+  Aspire.ServiceDefaults/  Aspire service defaults
+  Aspire.AppHost/          Orchestration entry point
+tests/
+  Benchmarks/              NBomber scenarios and configuration
+  *.UnitTests / *.IntegrationTests / *.ArchitectureTests
+tools/
+  build-report.ps1         Aggregates NBomber CSV output into report.md
+report-template.md
+plan.md
+```
 
-- **.NET 10 SDK**
-- **Docker Desktop** (for the PostgreSQL container)
-- **PowerShell 7+** (for the report generator)
+---
 
-### Run the full stack
+## Running it
+
+**Prerequisites:** .NET 10 SDK, Docker Desktop, PowerShell 7+.
+
+### 1. Start the full stack
 
 ```powershell
-# from the repo root
 dotnet run --project src/Aspire.AppHost
 ```
 
-The Aspire Dashboard opens in your browser. From there you can:
-- Visit the REST Swagger UI (`/swagger`) on the `web-restapi` resource.
-- Open the GraphQL Banana Cake Pop IDE (`/graphql`) on the `web-graphqlapi` resource.
-- Watch live traces and metrics for both APIs.
+The Aspire Dashboard opens in your browser. From there:
+- REST Swagger UI at `/swagger` on the `web-restapi` resource.
+- GraphQL Nitro IDE at `/graphql` on the `web-graphqlapi` resource.
+- Live traces and metrics for both APIs.
 
-### Run the benchmarks
+### 2. Run the benchmarks
 
 In a second terminal, with the AppHost still running:
 
 ```powershell
-# point the benchmark project at the running APIs
-$env:REST_URL = "http://localhost:5000"
-$env:GRAPHQL_URL = "http://localhost:5001"
+$env:REST_URL    = "http://localhost:5269"
+$env:GRAPHQL_URL = "http://localhost:5288"
 
 dotnet run --project tests/Benchmarks -c Release
 ```
 
-NBomber writes its raw output (HTML + CSV + JSON) to `tests/Benchmarks/reports/<scenario>/`.
+The benchmark runner auto-discovers product, order, and customer IDs from the running APIs. NBomber writes HTML + CSV + JSON reports to `tests/Benchmarks/reports/<scenario>/`.
 
-### Generate the comparison report
+### 3. Build the comparison report
 
 ```powershell
 ./tools/build-report.ps1
-# produces ./report.md filled from the CSV stats
 ```
+
+Ingests NBomber CSVs and fills `report-template.md` into `report.md`.
 
 ---
 
-## 11. How to read the results
+## Known asymmetries
 
-For each scenario you'll get a row like:
+REST and GraphQL are fundamentally different protocols. These differences cannot be eliminated -- only documented honestly:
 
-| Metric | REST | GraphQL |
+| # | Asymmetry | How it is handled |
 |---|---|---|
-| Throughput (RPS) | 49.8 | 47.2 |
-| Latency p50 | 12 ms | 18 ms |
-| Latency p95 | 28 ms | 41 ms |
-| Response size (avg) | 1.2 kB | 0.4 kB |
-| Backend calls/req | 4 | 1 |
-
-Read this **per scenario**, not in aggregate. The whole point is that the answer changes depending on the shape of the workload. Use the Aspire Dashboard trace view for the qualitative comparison (trace path complexity, span counts).
-
----
-
-## 12. Bonus: PostgreSQL temporal tables
-
-SQL Server has `SYSTEM_VERSIONING` built in; PostgreSQL doesn't. So we implemented it manually:
-
-```
-                            ┌──────────────────┐
-   UPDATE/DELETE row ───►   │ BEFORE trigger   │
-                            │  (per table)     │
-                            └────────┬─────────┘
-                                     │
-                                     ├─ stamps OLD.valid_to = now()
-                                     ├─ INSERT OLD INTO {table}_history
-                                     └─ stamps NEW.valid_from = now()
-```
-
-Tables with versioning: `orders`, `products`, `stock_items`. Each one has a sibling `*_history` table and a `BEFORE UPDATE OR DELETE` trigger.
-
-Exposed in both APIs:
-- REST: `GET /orders/{id}/history`, `GET /products/{id}/history`
-- GraphQL: `query { orderHistory(id) }`, `query { productHistory(id) }`
-
-This is a *stretch goal* — included so the paper can discuss whether one API style handles temporal data more ergonomically than the other.
-
----
-
-## 13. Known asymmetries
-
-No matter how careful you are, REST and GraphQL are not the same thing. Honesty matters more than pretending they are:
-
-| # | Asymmetry | Mitigation |
-|---|---|---|
-| 1 | GraphQL has schema-validation overhead on every request | Documented; not bypassed |
-| 2 | REST `?expand=` runs a *different* SQL query shape than GraphQL's resolver tree | Both compared with `AsNoTracking()`; SQL is observable via OTel |
-| 3 | GraphQL DataLoader batches; REST cannot without a custom batch endpoint | DataLoader is enabled — this is *part of what we're measuring* |
-| 4 | GraphQL responses use a slightly heavier JSON envelope (`data:`, `errors:`) | Captured in `response.bytes` metric |
-| 5 | GraphQL subscriptions use WebSockets; REST uses HTTP polling | Inherent to the styles — documented |
-
-The conclusion of the paper rests on **acknowledging these openly**, not on hiding them. Each asymmetry that affects a measurement is called out in the final `report.md`.
-
----
-
-## License & citation
-
-This project is part of academic research. If you use the benchmark methodology or code in your own work, please cite the accompanying paper (link to follow once published).
-
----
-
-*Built with .NET 10, Aspire, HotChocolate 16, EF Core 10, PostgreSQL 17, OpenTelemetry, and NBomber.*
+| 1 | GraphQL parses and validates the schema on every request | Documented; not bypassed |
+| 2 | REST deep-include endpoints produce different SQL shapes than GraphQL's resolver tree | Both use `AsNoTracking()`; SQL observable via OTel |
+| 3 | GraphQL DataLoader batches N+1; REST uses pre-composed JOINs | DataLoader is enabled -- this is part of what we measure |
+| 4 | GraphQL responses carry a heavier JSON envelope (`"data":`, `"errors":`) | Captured by `commerce_hub.response.bytes` metric |
+| 5 | GraphQL subscriptions use WebSockets; REST status uses HTTP polling | Inherent to the styles -- documented |

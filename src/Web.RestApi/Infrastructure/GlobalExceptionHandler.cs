@@ -11,6 +11,13 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
         Exception exception,
         CancellationToken cancellationToken)
     {
+        // Client disconnected — no point writing a response
+        if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
+        {
+            logger.LogDebug("Request was cancelled by the client");
+            return true;
+        }
+
         logger.LogError(exception, "Unhandled exception occurred");
 
         var problemDetails = new ProblemDetails

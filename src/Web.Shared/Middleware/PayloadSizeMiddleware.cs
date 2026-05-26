@@ -11,12 +11,27 @@ public sealed class PayloadSizeMiddleware(RequestDelegate next)
         using CountingStream countingStream = new(originalBody);
         context.Response.Body = countingStream;
 
-        await next(context);
+        try
+        {
+            await next(context);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // Client disconnected — nothing to record
+            return;
+        }
+        finally
+        {
+            context.Response.Body = originalBody;
+        }
 
-        CommerceHubDiagnostics.ResponsePayloadSize.Record(
-            countingStream.BytesWritten,
-            new KeyValuePair<string, object?>("http.route", context.GetEndpoint()?.DisplayName ?? "unknown"),
-            new KeyValuePair<string, object?>("http.request.method", context.Request.Method));
+        if (!context.RequestAborted.IsCancellationRequested)
+        {
+            CommerceHubDiagnostics.ResponsePayloadSize.Record(
+                countingStream.BytesWritten,
+                new KeyValuePair<string, object?>("http.route", context.GetEndpoint()?.DisplayName ?? "unknown"),
+                new KeyValuePair<string, object?>("http.request.method", context.Request.Method));
+        }
     }
 
     private sealed class CountingStream(Stream inner) : Stream

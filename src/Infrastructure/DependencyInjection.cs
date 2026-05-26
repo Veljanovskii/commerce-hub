@@ -34,11 +34,24 @@ public static class DependencyInjection
     {
         string? connectionString = configuration.GetConnectionString("Database");
 
+        // Increase Npgsql connection pool size to handle sustained load during benchmarks
+        if (!string.IsNullOrEmpty(connectionString) && !connectionString.Contains("Maximum Pool Size", StringComparison.OrdinalIgnoreCase))
+        {
+            connectionString += ";Maximum Pool Size=200";
+        }
+
         services.AddDbContext<ApplicationDbContext>((sp, options) =>
         {
             options
                 .UseNpgsql(connectionString, npgsqlOptions =>
-                    npgsqlOptions.MigrationsHistoryTable(HistoryRepository.DefaultTableName, Schemas.Default))
+                {
+                    npgsqlOptions.MigrationsHistoryTable(HistoryRepository.DefaultTableName, Schemas.Default);
+                    npgsqlOptions.EnableRetryOnFailure(
+                        maxRetryCount: 3,
+                        maxRetryDelay: TimeSpan.FromSeconds(5),
+                        errorCodesToAdd: null);
+                    npgsqlOptions.CommandTimeout(30);
+                })
                 .UseSnakeCaseNamingConvention();
 
             IEnumerable<IInterceptor> interceptors = sp.GetServices<IInterceptor>();

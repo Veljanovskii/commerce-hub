@@ -43,19 +43,42 @@ public static class Config
         // Discover customer + order via GraphQL
         if (string.IsNullOrEmpty(CustomerId) || string.IsNullOrEmpty(OrderId))
         {
-            HttpResponseMessage response = await client.PostAsJsonAsync(
-                $"{GraphQLBaseUrl}/graphql",
-                new { query = "{ products(take: 1) { items { id } } }" });
-
-            // Get first order with customer from GraphQL
-            response = await client.PostAsJsonAsync(
-                $"{GraphQLBaseUrl}/graphql",
-                new
+            // Discover first customer
+            if (string.IsNullOrEmpty(CustomerId))
+            {
+                HttpResponseMessage custResponse = await client.PostAsJsonAsync(
+                    $"{GraphQLBaseUrl}/graphql",
+                    new { query = "{ customers { id } }" });
+                if (custResponse.IsSuccessStatusCode)
                 {
-                    query = @"{ products(take: 1) { items { id } } }"
-                });
+                    using JsonDocument custDoc = await JsonDocument.ParseAsync(await custResponse.Content.ReadAsStreamAsync());
+                    if (custDoc.RootElement.TryGetProperty("data", out JsonElement data) &&
+                        data.TryGetProperty("customers", out JsonElement customers) &&
+                        customers.GetArrayLength() > 0)
+                    {
+                        CustomerId = customers[0].GetProperty("id").GetString()!;
+                    }
+                }
+            }
 
-            // We need a list-orders or a known order. For now, place one.
+            // Discover first order
+            if (string.IsNullOrEmpty(OrderId))
+            {
+                HttpResponseMessage ordResponse = await client.PostAsJsonAsync(
+                    $"{GraphQLBaseUrl}/graphql",
+                    new { query = "{ orders { id } }" });
+                if (ordResponse.IsSuccessStatusCode)
+                {
+                    using JsonDocument ordDoc = await JsonDocument.ParseAsync(await ordResponse.Content.ReadAsStreamAsync());
+                    if (ordDoc.RootElement.TryGetProperty("data", out JsonElement data) &&
+                        data.TryGetProperty("orders", out JsonElement orders) &&
+                        orders.GetArrayLength() > 0)
+                    {
+                        OrderId = orders[0].GetProperty("id").GetString()!;
+                    }
+                }
+            }
+
             if (string.IsNullOrEmpty(CustomerId))
             {
                 Console.WriteLine("[Benchmark] CustomerId not found. Please set BENCHMARK_CUSTOMER_ID env var.");
