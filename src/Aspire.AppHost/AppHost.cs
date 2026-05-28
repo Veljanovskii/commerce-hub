@@ -11,4 +11,9 @@ builder.AddProject<Projects.Web_RestApi>("web-restapi")
     .WithReference(database)
     .WaitFor(database);
 
+builder.AddProject<Projects.Web_GraphQLApi>("web-graphqlapi")
+    .WithEnvironment("ConnectionStrings__Database", database)
+    .WithReference(database)
+    .WaitFor(database);
+
 await builder.Build().RunAsync();

@@ -24,6 +24,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Aspire.ServiceDefaults\Aspire.ServiceDefaults.csproj" />
 		<ProjectReference Include="..\Infrastructure\Infrastructure.csproj" />
+		<ProjectReference Include="..\Web.Shared\Web.Shared.csproj" />
 	</ItemGroup>
 
 </Project>
