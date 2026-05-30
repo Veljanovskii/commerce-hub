@@ -28,7 +28,7 @@ The goal is to produce **actual, measurable data** for five realistic scenarios,
 
 ## What is .NET Aspire and why is it used here?
 
-**[.NET Aspire](https://learn.microsoft.com/dotnet/aspire/)** is Microsoft''s orchestration tool for local development of distributed applications. Instead of starting a database, two APIs and a dashboard by hand, Aspire describes everything in a single file (`AppHost.cs`) and starts them together with one command.
+**[.NET Aspire](https://learn.microsoft.com/dotnet/aspire/)** is Microsoft's orchestration tool for local development of distributed applications. Instead of starting a database, two APIs and a dashboard by hand, Aspire describes everything in a single file (`AppHost.cs`) and starts them together with one command.
 
 In this project, Aspire is used to:
 
@@ -203,9 +203,9 @@ This shape was chosen on purpose: it contains naturally **nested data** (`Order 
 
 **Data seeding** simply means *filling the database with some sample data the first time it starts*, so that the API has something to return without anyone having to type it in manually.
 
-The seeding here is **simple and hand-written** — it is a plain static class (`Infrastructure.Seeding.DataSeeder`) that builds the entities in C# code and persists them through the same **Entity Framework Core `DbContext`** the rest of the application uses, in a single `SaveChanges` call. This was a deliberate choice: it keeps the dataset **fully deterministic and inspectable**, so anyone reading the thesis can reproduce the exact same baseline the benchmarks were run against.
+The seeding here is plain and hand-written — a small static class (`Infrastructure.Seeding.DataSeeder`) builds the entities in C# code and persists them through the same **Entity Framework Core `DbContext`** the rest of the application uses, in a single `SaveChanges` call. No data-generation library is involved, so the resulting dataset is fully deterministic.
 
-When the application starts and the database is empty, the seeding routine inserts a realistic but small dataset:
+When the application starts and the database is empty, the seeder inserts a small but realistic dataset:
 
 | Entity | Approx. count | Notes |
 |---|---|---|
@@ -410,7 +410,7 @@ A more realistic mixed workload: each iteration **places a new order** (`POST /o
 | Max | 1 145.14 ms | **816.33 ms** |
 | Payload / req | **0.879 KB** | 0.921 KB |
 
-**Observations.** This is the only scenario where **GraphQL is the faster one** at every percentile, although the margin is small (~10–15 %). The likely reason is that the dominant cost here is the database write, which is *identical* for both APIs, so the per-request protocol overhead becomes secondary; and GraphQL's mutation+query in two HTTP calls happens to land slightly better in this particular configuration. Payload sizes are essentially the same. The honest takeaway is **"roughly neutral, with a slight edge to GraphQL on writes"**, in line with the original hypothesis.
+**Observations.** This is the only scenario where **GraphQL is the faster one** at every percentile, although the margin is small (~10–15 %). The likely reason is that the dominant cost here is the database write, which is *identical* for both APIs, so the per-request protocol overhead becomes secondary; and GraphQL's mutation+query in two HTTP calls happens to land slightly better in this particular configuration. Payload sizes are essentially the same. The honest takeaway is **"roughly neutral, with a slight edge to GraphQL on writes"**.
 
 ### Summary of results
 
@@ -425,6 +425,23 @@ A more realistic mixed workload: each iteration **places a new order** (`POST /o
 **Overall conclusion.** Across these five scenarios, **REST (Minimal APIs) was the faster API in four of five tests**, often by a wide margin under load. GraphQL's theoretical advantages — flexible field selection and DataLoader batching — were measurable on payload size in one scenario (over-fetching) and gave a small latency edge in one mixed write/read scenario, but never overturned the latency cost of its per-request query processing. These results suggest GraphQL's strongest justification on this kind of workload is **client-side flexibility** (one schema, many shapes of response), not raw server performance.
 
 *(The raw NBomber HTML/CSV/JSON output for each run is preserved under `tests/Benchmarks/reports/`.)*
+
+---
+
+## Limitations and honest caveats
+
+No benchmark setup is perfect, and the numbers above describe **this specific configuration** — not REST or GraphQL in the abstract. The most important caveats to keep in mind when interpreting them:
+
+- **Single-machine setup.** Both APIs, PostgreSQL and the load generator all run on the same physical machine over `localhost`. There is no real network in between, so the absolute latencies are best-case numbers. On a real network, the *relative* gap between the two APIs would likely shrink (because network round-trip time becomes the dominant cost), but the ordering of the results would not change.
+- **Cold-start effects are included.** Each scenario starts from a fresh, just-booted API process. The first few seconds of every run include JIT compilation, EF Core model warm-up and database connection-pool warm-up. This is partly why the worst percentiles in Scenarios 1 and 4 look so much worse than the typical case — a few early requests pay startup costs that all later requests do not.
+- **Small dataset.** The seeded dataset is relatively small (50 products, 20 orders). Effects that only show up on large tables — index-vs-scan trade-offs, large result-set streaming, deep pagination cost — are not exercised here.
+- **REST was given a tuned, dedicated nested endpoint.** Scenarios 2 and 4 deliberately compare *well-designed REST* (with a purpose-built endpoint that returns the whole nested shape in one query) against *out-of-the-box GraphQL*. A naive REST API that required several round-trips would look much worse, and GraphQL's relative advantage would grow.
+- **GraphQL was used with HotChocolate's defaults.** DataLoaders, server-side projections and the filtering/sorting middleware are all enabled. They help in some scenarios and add overhead in others; turning any of them off would shift the results.
+- **No caching layer is in the picture.** Neither output caching (ASP.NET Core), HTTP caching headers, nor GraphQL *persisted queries* / Automatic Persisted Queries are configured. Persisted queries in particular would meaningfully reduce GraphQL's per-request parse cost — i.e. one of the costs that hurts it most in Scenario 1.
+- **No authentication, rate limiting or response compression.** These would add overhead to *both* APIs but are deliberately omitted so the measurement focuses on the API style itself.
+- **HTTP/1.1 over plain TCP.** Both APIs are served over HTTP/1.1 without TLS. Using HTTP/2 (multiplexing) or gRPC on the REST side, or HTTP/3 on either side, could shift the results.
+
+In short: the results are valid evidence about *this* implementation and *this* workload. They are a strong indicator of where REST and GraphQL tend to differ, but they are not a universal verdict on either technology.
 
 ---
 

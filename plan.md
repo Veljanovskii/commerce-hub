@@ -1,269 +1,60 @@
-# CommerceHub — REST vs GraphQL Comparison Plan
+Excellent — both documents reveal a lot of valuable, currently-unused outputs you can include in the thesis. Here is a structured list of what you have, where it lives, and exactly how to extract it.
+1. Aspire Dashboard — trace screenshots (the "Trace Screenshots" mention)
+This is the single most thesis-friendly artifact, and you already have everything wired for it. The Aspire Dashboard is the web UI that opens automatically when you run dotnet run --project src/Aspire.AppHost. It has built-in distributed tracing powered by OpenTelemetry (BackendCallCountingInterceptor.cs already configures the OTLP export).
+How to capture them:
+1.	Start the AppHost, wait for the dashboard to open.
+2.	Open ApplicationBuilderExtensions.cs's Swagger or the GraphQL Nitro IDE and manually send one request for each scenario you want to illustrate (Simple GET, Deep Graph, N+1 List, etc.).
+3.	In the dashboard's Traces tab, find that request — it appears as a "waterfall" diagram showing every span: HTTP, EF Core SQL, HotChocolate resolvers, your custom CommerceHub.Application / CommerceHub.Infrastructure spans.
+4.	Click the trace, expand it, and take a screenshot.
+What this gives you for the thesis:
+•	A side-by-side waterfall for REST and GraphQL on the same operation visually explains why the numbers differ — REST shows one fat SQL span, GraphQL shows the resolver tree plus several smaller DataLoader-batched SQL spans.
+•	It also visualises the per-layer time breakdown (transport → application → infrastructure → DB), which is one of the comparison dimensions explicitly listed in plan.md §0.
+2. Backend SQL call count per request (commerce_hub.backend.calls)
+BackendCallCountingInterceptor.cs registers a BackendCallCountingInterceptor that increments a counter on every EF Core SQL command. This is gold for the N+1 narrative.
+How to extract it:
+•	In the Aspire Dashboard → Metrics tab → pick the ApplicationBuilderExtensions.cs / appsettings.Development.json resource → find commerce_hub.backend.calls.
+•	Filter by the route/operation tag to see "how many SQL calls did this single request issue?".
+•	For the thesis you can present a table: "Deep Graph Fetch: REST = 1 SQL call, GraphQL with DataLoader = N SQL calls" (whatever the real numbers turn out to be).
+3. Response payload size histogram (commerce_hub.response.bytes)
+Both APIs feed this metric (REST via PayloadSizeMiddleware, GraphQL via the HotChocolate diagnostic listener). It is more granular than the single payload number NBomber reports.
+How to extract it: Same place as #2 (Metrics tab). You get distribution (min/avg/p95/max), not just an average — useful as a chart in the thesis.
+4. Per-layer duration spans
+CommerceHubDiagnostics exposes two ActivitySources — CommerceHub.Application and CommerceHub.Infrastructure. Every trace already includes them.
+This lets you produce a thesis chart like:
+Layer	REST (ms)	GraphQL (ms)
+Transport (Kestrel + parsing)	…	…
+Application (handler)	…	…
+Infrastructure (EF + SQL)	…	…
+You read these numbers off the span durations in any single Aspire trace. It's the cleanest way to show "GraphQL spends extra time before it ever reaches the handler".
+5. Seq logs (structured logs from both APIs)
+AppHost includes an optional Seq container. Seq is a structured-log viewer; you can:
+•	Show how many log events one request emits on each API (Phase 5 in plan.md calls this out explicitly).
+•	Show a side-by-side query like RequestPath = '/products/{id}/detail' vs the GraphQL operation name — useful for the "observability comparison" row of the template.
+Screenshot of a Seq query for one request on each API would be another high-value thesis figure.
+6. NBomber's built-in HTML reports
+NBomber doesn't only output the markdown you pasted in — it also writes a full HTML report with latency distribution charts and throughput-over-time graphs to tests/Benchmarks/reports/<scenario>/. Those charts are publication-quality and would look great in a thesis appendix; the README only shows the summary numbers.
+7. GraphQL schema (SDL) export
+HotChocolate can export the full schema as schema.graphql. Including a small SDL excerpt in the thesis is a nice way to show how one schema replaces many REST endpoints. You can generate it with:
+dotnet tool install -g StrawberryShake.Tools  # or use HotChocolate's CLI
+# then point it at the running /graphql endpoint
 
-> Living document. Updated as work progresses. Check off items as they complete.
-> Last updated: _Phase 9 complete_
 
+…or simply copy it from the Nitro IDE's Schema tab while the GraphQL API is running.
+8. REST OpenAPI / Swagger document
+Symmetric to #7: export swagger.json (or take a screenshot of the Swagger UI) to visually contrast "many endpoints, fixed shapes" vs the GraphQL SDL's "one endpoint, flexible shape". Already available at /swagger on ApplicationBuilderExtensions.cs.
+9. EF Core generated SQL (deep-include vs DataLoader batches)
+For Scenarios 2 and 4 specifically, you can capture the actual SQL each API runs:
+•	The Aspire Dashboard trace shows the full SQL text in each db.statement span.
+•	Or temporarily enable LogTo(Console.WriteLine, LogLevel.Information) on the DbContext.
+Putting the two SQL queries side-by-side in the thesis is one of the most convincing artifacts you can produce — it directly proves the architectural difference behind the latency gap in Scenarios 2 and 4.
+10. Temporal-table history queries (Phase 9 — completely undocumented in the README)
+You implemented temporal tables (orders_history, products_history, stock_items_history) and exposed them in both APIs (GET /orders/{id}/history and query { orderHistory(id) }). This is currently invisible in the README and in the thesis-relevant output. Even if you don't add a 6th benchmark scenario, a short thesis section comparing how each API style models a "time-travel query" would showcase the work without much extra effort.
 ---
-
-## 0. Goal
-
-Build a `.NET Aspire`-orchestrated solution (`CommerceHub` — a Product Ordering System) that serves as a **fair testing bed** to compare two Web API styles in .NET 10 over **identical business logic**:
-
-- **REST** (Minimal APIs)
-- **GraphQL** (HotChocolate)
-
-Comparison dimensions:
-
-| Category | Metrics |
-|---|---|
-| **Performance** | average latency, p50, p95, throughput |
-| **Data transfer** | response payload size, total number of calls to backend services |
-| **Observability / diagnosis** | request duration per API layer, number of spans per scenario, number of log events, trace path through services |
-
----
-
-## 1. Guiding Principles (Fairness Rules)
-
-- [ ] Both APIs share the **exact same** Domain / Application / Infrastructure layers — no duplicated business logic.
-- [ ] Both APIs hit the **same database instance** with the **same EF Core configuration**.
-- [ ] Both APIs run as **separate Aspire resources** on identical hosting (Kestrel, .NET 10, same container base image).
-- [ ] Both APIs share the **same OpenTelemetry pipeline** (traces, metrics, logs) exporting to the same backend.
-- [ ] Both APIs expose **functionally equivalent operations** (same inputs, same outputs, same validation).
-- [ ] Same HTTP version, same compression setting, same warm-up period before measurement.
-- [ ] Any unavoidable asymmetry is **documented**, not hidden.
-
----
-
-## 2. Target Solution Structure
-
-```
-commerce-hub/
-├── src/
-│   ├── Domain/                          # Entities, value objects, domain events
-│   │   ├── Products/                    # Product, Category, Sku
-│   │   ├── Supplies/                    # Supplier, StockItem, SupplyOrder
-│   │   ├── Orders/                      # Order, OrderLine, OrderStatus
-│   │   └── Customers/                   # Customer
-│   ├── SharedKernel/                    # Base types (already present)
-│   ├── Application/                     # CQRS handlers (MediatR or hand-rolled)
-│   │   ├── Products/{Queries,Commands}
-│   │   ├── Supplies/{Queries,Commands}
-│   │   └── Orders/{Queries,Commands}
-│   ├── Infrastructure/                  # EF Core, repositories, external services
-│   ├── Web.RestApi/                     # REST endpoints (Minimal API) — exists
-│   ├── Web.GraphQLApi/                  # NEW — HotChocolate-based GraphQL
-│   ├── Web.Shared/                      # NEW — shared OTel setup, auth, health, etc.
-│   ├── ServiceDefaults/                 # Aspire defaults
-│   └── Aspire.AppHost/                  # Orchestration — exists
-└── tests/
-    ├── Benchmarks/                      # NBomber scenarios — NEW
-    ├── *.UnitTests
-    └── *.IntegrationTests
-```
-
----
-
-## 3. Domain Model (Product Ordering System)
-
-Entities chosen to produce graph-shaped data so REST over-/under-fetching is visible:
-
-- **Product** — Id, Name, Sku, Description, Price, CategoryId, StockItems
-- **Category** — Id, Name, ParentCategoryId (self-referential → nested queries)
-- **Supplier** — Id, Name, ContactInfo
-- **StockItem** — ProductId, SupplierId, QuantityOnHand, ReorderLevel
-- **SupplyOrder** — Id, SupplierId, Lines, Status (Pending/Received)
-- **Customer** — Id, Name, Email, Addresses
-- **Order** — Id, CustomerId, OrderLines, Status, PlacedAt, Total
-- **OrderLine** — ProductId, Quantity, UnitPriceAtOrder
-
-Graph paths to exploit: `Order → Customer → Addresses`, `Order → OrderLines → Product → Category → ParentCategory`, `Product → StockItems → Supplier`.
-
----
-
-## 4. API Surface — Functional Parity Matrix
-
-| # | Operation | REST | GraphQL |
-|---|---|---|---|
-| 1 | Get product by id | `GET /products/{id}` | `query { product(id) { … } }` |
-| 2 | List products (filter/page) | `GET /products?category=&page=` | `query { products(filter, paging) { … } }` |
-| 3 | Product + category + stock + supplier (deep) | Multiple calls or `?include=` | Single nested query |
-| 4 | Place order | `POST /orders` | `mutation placeOrder(input)` |
-| 5 | Order detail with customer + lines + products | `GET /orders/{id}?expand=…` | Nested `query { order(id) { … } }` |
-| 6 | Order status update (optional) | `GET /orders/{id}/status` polling | `subscription orderStatus(id)` |
-
-Each row gets a **canonical scenario** the benchmark fetches identically on both sides.
-
----
-
-## 5. Cross-Cutting Setup (`Web.Shared`)
-
-- [ ] OpenTelemetry: ASP.NET Core + HttpClient + EF Core + HotChocolate instrumentation, OTLP export to Aspire dashboard.
-- [ ] Custom `ActivitySource` per layer: `CommerceHub.Application`, `CommerceHub.Infrastructure` — enables per-layer duration measurement.
-- [ ] Custom `Meter` for: response payload size histogram, backend-call counter per request.
-- [ ] `PayloadSizeMiddleware` (REST) + HotChocolate diagnostic event listener (GraphQL) → `commerce_hub.response.bytes` metric tagged by operation.
-- [ ] Request-scoped backend-call counter (EF command executed / outbound HTTP) → `commerce_hub.backend.calls` per request.
-
----
-
-## 6. Benchmark Scenarios (`tests/Benchmarks`)
-
-Tooling: **NBomber** (.NET-native, Aspire-friendly). Alt: k6.
-
-| # | Scenario | Expected favorable side |
-|---|---|---|
-| 1 | Simple GET — single product by id | REST (less overhead) |
-| 2 | Deep graph fetch — order with customer/lines/products/categories | GraphQL |
-| 3 | Over-fetch — need only name + price | GraphQL |
-| 4 | N+1 list — 50 products × category × supplier | GraphQL (DataLoader) |
-| 5 | Write + read-back — place order then deep fetch | Neutral |
-
-Load levels per scenario: **50 / 200 / 500 RPS** for 60s, after 30s warm-up.
-
-Collect:
-
-| Metric | Source |
-|---|---|
-| Latency p50/p95/p99, throughput | NBomber report |
-| Response payload bytes | Custom OTel metric |
-| Backend call count per request | Custom OTel metric |
-| Per-layer duration | Custom `ActivitySource` spans |
-| Spans / logs per scenario | Aspire Dashboard / OTLP backend query |
-| Trace path | Aspire Dashboard trace view |
-
----
-
-## 7. Aspire `AppHost` Composition
-
-```
-AppHost
-├── postgres                   ─── shared DB (Aspire PostgreSQL resource)
-├── seq (optional)            ─── log/trace backend
-├── web-rest                  → references postgres, seq
-├── web-graphql               → references postgres, seq
-└── benchmarks                → references web-rest, web-graphql (on-demand)
-```
-
-Both APIs receive **identical** connection string and OTel endpoint from Aspire.
-
----
-
-## 8. Technology Choices
-
-- **GraphQL**: HotChocolate 14+ (OTel built-in, DataLoader, filtering/sorting/paging conventions).
-- **REST**: Minimal APIs (current style).
-- **ORM**: EF Core 10 — `AsNoTracking`, compiled queries where useful — identical on both sides.
-- **CQRS dispatch**: hand-rolled handlers (no MediatR).
-- **Validation**: FluentValidation in Application layer, transport-agnostic.
-- **Auth**: none — removed from the template.
-- **Database**: PostgreSQL (Aspire `AddPostgres`).
-- **Container base**: `mcr.microsoft.com/dotnet/aspnet:10.0` for both.
-
----
-
-## 9. Implementation Phases & Progress
-
-Legend: ⬜ todo · 🟡 in progress · ✅ done · ⏸ blocked
-
-### Phase 1 — Domain reset
-- ✅ Remove all template `User`/auth code: `Domain/Users/*`, `Application/Users/*`, `Web.RestApi/Endpoints/Users/*`, auth services & registrations, JWT config in `appsettings*.json`.
-- ✅ Remove auth middleware/DI calls from `Web.RestApi/Program.cs` and `DependencyInjection.cs`.
-- ✅ Add `Product`, `Category`, `Sku` under `Domain/Products`.
-- ✅ Add `Supplier`, `StockItem`, `SupplyOrder` under `Domain/Supplies`.
-- ✅ Add `Order`, `OrderLine`, `OrderStatus` under `Domain/Orders`.
-- ✅ Add `Customer`, `Address` under `Domain/Customers`.
-- ✅ EF Core configurations + `InitialCreate` migration against Postgres.
-- ✅ Seed data (a few categories, ~50 products, ~5 suppliers, ~10 customers, ~20 orders).
-
-### Phase 2 — Application layer
-- ✅ Handlers for parity matrix §4 rows 1–5. Pure C#, transport-agnostic.
-- ✅ DTOs/response shapes (shared by both APIs).
-- ✅ FluentValidation for `PlaceOrderCommand`.
-
-### Phase 3 — REST surface (`Web.RestApi`)
-- ✅ Replace `Users` endpoints with `Products`, `Orders`, `Customers` endpoints.
-- ✅ Implement `?expand=` / `?include=` for deep fetch parity (row 3, 5).
-- ✅ Add `GET /orders/{id}/status` polling endpoint (parity row 6).
-- ✅ Confirm Swagger/OpenAPI still generated.
-
-### Phase 4 — GraphQL surface (`Web.GraphQLApi`)
-- ✅ Create project, add HotChocolate 16.0.2.
-- ✅ Schema types mirroring DTOs.
-- ✅ Resolvers call the same Application handlers.
-- ✅ Configure DataLoader for N+1 scenarios.
-- ✅ Enable filtering/sorting/paging conventions.
-- ✅ Add `subscription orderStatus(id)` (parity row 6).
-
-### Phase 5 — Web.Shared instrumentation
-- ✅ Create `Web.Shared` project.
-- ✅ Centralized `AddCommerceHubObservability(...)` extension.
-- ✅ Per-layer `ActivitySource`s wired into Application/Infrastructure.
-- ✅ Payload-size metric (middleware + HotChocolate listener).
-- ✅ Backend-call counter (EF interceptor + `HttpClient` handler).
-
-### Phase 6 — Aspire `AppHost` wiring
-- ✅ Add Postgres resource.
-- ✅ Add Seq (optional).
-- ✅ Register both APIs with reference to DB + OTel.
-- ✅ Configure identical resource limits (CPU/memory) for both APIs.
-
-### Phase 7 — Benchmarks
-- ✅ Create `tests/Benchmarks` project (NBomber 6.4.0 + NBomber.Http 6.2.0).
-- ✅ Implement 5 scenarios × 2 APIs (REST + GraphQL).
-- ✅ Warm-up step before measurement (30s ramp).
-- ✅ CSV/JSON export of results (NBomber default HTML+CSV).
-
-### Phase 8 — Reporting
-- ✅ `report-template.md` with comparison tables (latency, throughput, payload, calls, spans).
-- ✅ Script (`tools/build-report.ps1`) to ingest NBomber output + OTel queries → produce filled report.
-- ⬜ Capture screenshots of Aspire trace views for the qualitative trace-path comparison.
-
-### Phase 9 — Postgres temporal tables (stretch)
-- ✅ Enable `system_versioning` / temporal history on key tables (`orders`, `products`, `stock_items`).
-- ✅ EF Core migration adding period columns (`valid_from`, `valid_to`) and history tables.
-- ✅ Query helpers for "as-of" / "between" temporal queries.
-- ✅ Expose optional temporal query in both APIs (e.g., `GET /orders/{id}/history`, `query { orderHistory(id, asOf) }`).
-
----
-
-## 10. Pitfalls to Avoid (Fairness Checklist)
-
-- ❌ Response compression enabled on only one side.
-- ❌ Different HTTP versions (HTTP/1.1 vs HTTP/2).
-- ❌ GraphQL DataLoader without an equivalent batch endpoint or documented note on REST.
-- ❌ Measuring cold start — always warm up.
-- ❌ Different EF Core tracking behavior between the two.
-- ✅ Document every unavoidable asymmetry explicitly in the final report.
-
----
-
-## 11. Decisions (locked-in)
-
-- [x] **Database**: **PostgreSQL** (Aspire `Aspire.Hosting.PostgreSQL` resource).
-- [x] **CQRS dispatch**: **hand-rolled handlers** (no MediatR).
-- [x] **Auth**: **none** — remove all existing `User`/auth logic carried over from the template; it has no role in the REST-vs-GraphQL comparison.
-- [x] **Subscriptions / SSE**: **included** — implement parity-matrix row 6 (REST polling vs GraphQL subscription).
-- [x] **Benchmark tool**: **NBomber**.
-
-### Deferred / stretch goals (post-comparison)
-
-- ⬜ **Postgres temporal tables** — promoted to **Phase 9** above. Will implement after the comparison is complete and benchmarked.
-
----
-
-## 12. Progress Log
-
-| Date | Change |
-|---|---|
-| _today_ | Initial plan committed. |
-| _today_ | Decisions locked in: Postgres, hand-rolled handlers, no auth, include subscriptions, NBomber. Added stretch goal: Postgres temporal tables. |
-| _today_ | **Phase 1 complete.** Removed all Users/Todos/Auth template code. Added domain entities (Product, Category, Supplier, StockItem, SupplyOrder, Customer, Address, Order, OrderLine). EF configurations created. DataSeeder with ~50 products, 7 categories, 5 suppliers, 10 customers, 20 orders. Build green. |
-| _today_ | **Phase 2 complete.** Application layer handlers: GetProductById, GetProducts (paged/filtered), GetProductDetail (deep with category + stock + supplier), PlaceOrder (with validation), GetOrderById (detail), GetOrderStatus. DTOs shared across APIs. Migration `InitialCreate` generated. Local dotnet-ef 10.0.4 tool manifest added. Build green. |
-| _today_ | **Phase 3 complete.** REST endpoints: `GET /products`, `GET /products/{id}`, `GET /products/{id}/detail` (deep), `POST /orders`, `GET /orders/{id}`, `GET /orders/{id}/status`. Swagger still functional. Build green. |
-| _today_ | **Phase 4 complete.** `Web.GraphQLApi` project created with HotChocolate 16.0.2. Types: ProductType, CategoryType, OrderType, OrderLineType, CustomerType, StockItemType, SupplierType. Query (products filtered/sorted/projected, productById deep, orderById deep, orderStatus). Mutation (placeOrder). Subscription (onOrderStatusChanged). Filtering/sorting/projections enabled. Wired into Aspire AppHost. Build green. DataLoader deferred (add when benchmarking N+1). |
-| _today_ | **Phase 5 complete.** `Web.Shared` project: `CommerceHubDiagnostics` (ActivitySources for Application/Infrastructure layers, Meter with response-size histogram + backend-call counter), `ObservabilityExtensions.AddCommerceHubObservability()`, `PayloadSizeMiddleware`, `BackendCallCountingInterceptor`. Both APIs wired: interceptor via DI into EF DbContext, middleware in REST pipeline, OTel tracing+metrics with OTLP export. Build green. |
-| _today_ | **Phase 6 complete.** Aspire AppHost already had Postgres + both APIs wired. Marked done. |
-| _today_ | **Phase 7 complete.** `tests/Benchmarks` project with NBomber 6.4.0. 5 scenarios: SimpleGet, DeepGraph, OverFetch, N+1List, WriteReadBack. Each runs REST + GraphQL side-by-side. Config via env vars (REST_URL, GRAPHQL_URL, BENCHMARK_PRODUCT_ID, etc.). Auto-discovers product IDs from REST. Reports to `./reports/`. Build green. |
-| _today_ | **Phase 4 & 6 remaining items complete.** DataLoaders added (CategoryById, SupplierById, ProductById, StockItemsByProductId) wired into ProductType, StockItemType, OrderLineType resolvers. Seq container added to AppHost with ingestion + UI endpoints; both APIs receive SEQ_URL. Build green. |
-| _today_ | **Phase 8 complete.** `report-template.md` with comparison tables for all 5 scenarios. `tools/build-report.ps1` script ingests NBomber CSV output and fills the template. |
-| _today_ | **Phase 9 complete.** Temporal tables for PostgreSQL: `valid_from`/`valid_to` period columns on Order, Product, StockItem. History tables (`orders_history`, `products_history`, `stock_items_history`) with BEFORE UPDATE/DELETE triggers for versioning. Query handlers: GetOrderHistory, GetProductHistory. REST endpoints: `GET /orders/{id}/history`, `GET /products/{id}/history`. GraphQL queries: `orderHistory(id)`, `productHistory(id)`. Build green. |
-
+Suggested priority for the thesis
+If I were prioritising, the top picks for figures in the thesis itself would be (in order):
+1.	Trace waterfall screenshots (Aspire Dashboard) — REST vs GraphQL for Scenarios 2 and 4. Single best visual.
+2.	NBomber HTML latency-distribution chart for Scenario 4 — the percentile collapse is striking.
+3.	Side-by-side SQL that each API generated for the same logical operation.
+4.	Backend-calls-per-request table from commerce_hub.backend.calls.
+5.	Per-layer duration breakdown from your custom ActivitySources.
+Items 6–10 are great appendix material if you want to be thorough.
