@@ -122,15 +122,13 @@ await WaitForReady();
 if (!string.IsNullOrEmpty(Config.CustomerId) && !string.IsNullOrEmpty(Config.SecondProductId))
 {
     Console.WriteLine("\n[Benchmark] ═══ Scenario 5: Write + Read-back ═══");
-    using (HttpClient client = CreateClient())
-    {
-        NBomberRunner
-            .RegisterScenarios(
-                WriteReadBackScenario.RestScenario(client).WithLoadSimulations(WriteLoad()),
-                WriteReadBackScenario.GraphQLScenario(client).WithLoadSimulations(WriteLoad()))
-            .WithReportFolder("reports/5_write_read")
-            .Run();
-    }
+    using HttpClient client = CreateClient();
+    NBomberRunner
+        .RegisterScenarios(
+            WriteReadBackScenario.RestScenario(client).WithLoadSimulations(WriteLoad()),
+            WriteReadBackScenario.GraphQLScenario(client).WithLoadSimulations(WriteLoad()))
+        .WithReportFolder("reports/5_write_read")
+        .Run();
 }
 
 Console.WriteLine("\n[Benchmark] All scenarios complete. Reports in ./reports/");

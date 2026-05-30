@@ -1,6 +1,5 @@
 using System.Reflection;
 using HealthChecks.UI.Client;
-using Infrastructure.Seeding;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Web.RestApi.Extensions;
@@ -34,9 +33,6 @@ app.MapEndpoints();
 if (app.Environment.IsDevelopment())
 {
     app.UseSwaggerWithUi();
-
-    app.ApplyMigrations();
-    DataSeeder.SeedData(app.Services);
 }
 
 app.MapHealthChecks("health", new HealthCheckOptions

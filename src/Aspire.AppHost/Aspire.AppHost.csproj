@@ -15,6 +15,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Web.RestApi\Web.RestApi.csproj" />
 		<ProjectReference Include="..\Web.GraphQLApi\Web.GraphQLApi.csproj" />
+		<ProjectReference Include="..\Web.MigrationService\Web.MigrationService.csproj" />
 	</ItemGroup>
 
 </Project>
