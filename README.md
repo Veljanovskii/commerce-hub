@@ -75,7 +75,7 @@ flowchart LR
     GQL  -. telemetry .-> DASH
 ```
 
-The important part is the bottom half: both APIs are **thin layers** on top of the same shared core. They don''t contain business logic of their own — they only translate HTTP/GraphQL requests into calls on the shared core, and then translate the results back.
+The important part is the bottom half: both APIs are **thin layers** on top of the same shared core. They don't contain business logic of their own — they only translate HTTP/GraphQL requests into calls on the shared core, and then translate the results back.
 
 ---
 
@@ -203,7 +203,9 @@ This shape was chosen on purpose: it contains naturally **nested data** (`Order 
 
 **Data seeding** simply means *filling the database with some sample data the first time it starts*, so that the API has something to return without anyone having to type it in manually.
 
-When the application starts and the database is empty, a small seeding routine inserts a realistic but small dataset:
+The seeding here is **simple and hand-written** — it is a plain static class (`Infrastructure.Seeding.DataSeeder`) that builds the entities in C# code and persists them through the same **Entity Framework Core `DbContext`** the rest of the application uses, in a single `SaveChanges` call. This was a deliberate choice: it keeps the dataset **fully deterministic and inspectable**, so anyone reading the thesis can reproduce the exact same baseline the benchmarks were run against.
+
+When the application starts and the database is empty, the seeding routine inserts a realistic but small dataset:
 
 | Entity | Approx. count | Notes |
 |---|---|---|
@@ -220,14 +222,95 @@ If the database already contains data on startup, seeding is skipped — so benc
 
 ---
 
-## Pagination and sorting
+## How the system starts up
 
-When a list endpoint can potentially return many records (for example "all products"), returning everything at once is wasteful and slow. CommerceHub uses two standard techniques to avoid this:
+The startup sequence is worth showing explicitly because it is what guarantees both APIs begin every benchmark run from an **identical, fully-migrated, fully-seeded** database. Aspire coordinates the order, the migration service handles schema + seeding, and only then are the two APIs allowed to start serving traffic.
 
-- **Pagination** means cutting a long list into smaller *pages*. The client asks for "page 2 with 20 items per page" instead of asking for everything. In the REST API this is done with `?page=` and `?pageSize=` query parameters; in GraphQL it is exposed through HotChocolate''s built-in paging.
-- **Sorting** means letting the client decide the order in which items come back (for example "by price, descending" or "by name, ascending"). In the REST API this is exposed via query parameters; in the GraphQL API it is exposed through HotChocolate''s `order:` argument, which generates the corresponding SQL `ORDER BY` clause on the database side.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer
+    participant AppHost as Aspire AppHost
+    participant DB as PostgreSQL (container)
+    participant Mig as Web.MigrationService
+    participant REST as Web.RestApi
+    participant GQL as Web.GraphQLApi
 
-Both are applied at the **database level**, so the server never loads the full table into memory just to return a small slice of it.
+    Dev->>AppHost: dotnet run --project src/Aspire.AppHost
+    AppHost->>DB: Start container & wait until ready
+    DB-->>AppHost: Ready
+    AppHost->>Mig: Start (WaitFor DB)
+    Mig->>DB: Apply EF Core migrations
+    Mig->>DB: Seed baseline data (if empty)
+    Mig-->>AppHost: Completed & exits
+    AppHost->>REST: Start (WaitForCompletion of Mig)
+    AppHost->>GQL: Start (WaitForCompletion of Mig)
+    REST-->>AppHost: Healthy
+    GQL-->>AppHost: Healthy
+    AppHost-->>Dev: Dashboard URL
+```
+
+The key Aspire primitives used here are `WaitFor(database)` (do not start until Postgres accepts connections) and `WaitForCompletion(migrations)` (do not start the APIs until the migration service has finished migrating *and* seeding). This rules out one of the most common sources of unfairness in benchmarking — running the second API against a database that is in a slightly different state than the first.
+
+---
+
+## How a request flows through each API
+
+The two APIs share the *same* business core but expose it very differently. The sequence diagrams below trace the same logical operation — *"fetch an order with its customer and order lines"* (Scenario 2) — through each style. They explain at a glance *why* the latency and payload numbers in the benchmark section look the way they do.
+
+### REST (Minimal API) request
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant REST as Web.RestApi<br/>(Minimal API endpoint)
+    participant App as Application<br/>(query handler)
+    participant EF as EF Core DbContext
+    participant DB as PostgreSQL
+
+    Client->>REST: GET /orders/{id}
+    REST->>App: GetOrderByIdQuery(id)
+    App->>EF: Query Orders.Include(Customer).Include(OrderLines.Product)
+    EF->>DB: 1 SQL SELECT with JOINs
+    DB-->>EF: Single flat row set
+    EF-->>App: Order aggregate
+    App-->>REST: OrderResponse DTO
+    REST-->>Client: 200 OK + JSON body
+```
+
+A single round-trip to the database, a single serialised DTO, and a thin JSON envelope. This is why REST wins on latency and payload in Scenarios 1, 2 and 4.
+
+### GraphQL (HotChocolate) request
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client
+    participant GQL as Web.GraphQLApi<br/>(HotChocolate)
+    participant Resolvers as Resolvers<br/>(Query / OrderType)
+    participant DL as DataLoaders
+    participant EF as EF Core DbContext
+    participant DB as PostgreSQL
+
+    Client->>GQL: POST /graphql<br/>query { orderById(id) { customer { ... } orderLines { product { ... } } } }
+    GQL->>GQL: Parse + validate + plan query
+    GQL->>Resolvers: Resolve orderById
+    Resolvers->>EF: Load Order by id
+    EF->>DB: SELECT order
+    DB-->>EF: Order row
+    Resolvers->>DL: Request Customer for order (batched)
+    Resolvers->>DL: Request Products for each OrderLine (batched)
+    DL->>EF: 1 batched SELECT per related entity type
+    EF->>DB: SELECT customers WHERE id IN (...)
+    EF->>DB: SELECT products WHERE id IN (...)
+    DB-->>DL: Results
+    DL-->>Resolvers: Resolved entities
+    Resolvers-->>GQL: Field-by-field tree
+    GQL-->>Client: 200 OK + { "data": { ... } }
+```
+
+The extra steps — query parsing, validation, walking the resolver tree, and the *per-request* DataLoader scheduling — are exactly the fixed costs that show up as worse tail latency in the benchmark results. The trade-off is that the client decides which fields it wants without the server ever needing a new endpoint.
 
 ---
 
