@@ -10,6 +10,7 @@
     <Project Path="src/Infrastructure/Infrastructure.csproj" />
     <Project Path="src/SharedKernel/SharedKernel.csproj" />
     <Project Path="src/Web.GraphQLApi/Web.GraphQLApi.csproj" />
+    <Project Path="src/Web.MigrationService/Web.MigrationService.csproj" />
     <Project Path="src/Web.RestApi/Web.RestApi.csproj" />
     <Project Path="src/Web.Shared/Web.Shared.csproj" />
   </Folder>

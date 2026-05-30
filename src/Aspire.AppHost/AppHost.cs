@@ -6,14 +6,19 @@ IResourceBuilder<PostgresDatabaseResource> database = builder
     .WithBindMount("../../.containers/db", "/var/lib/postgresql/data")
     .AddDatabase("commerce-hub");
 
-builder.AddProject<Projects.Web_RestApi>("web-restapi")
-    .WithEnvironment("ConnectionStrings__Database", database)
-    .WithReference(database)
+IResourceBuilder<ProjectResource> migrations = builder
+    .AddProject<Projects.Web_MigrationService>("migrations")
+    .WithReference(database, "Database")
     .WaitFor(database);
 
+builder.AddProject<Projects.Web_RestApi>("web-restapi")
+    .WithReference(database, "Database")
+    .WaitFor(database)
+    .WaitForCompletion(migrations);
+
 builder.AddProject<Projects.Web_GraphQLApi>("web-graphqlapi")
-    .WithEnvironment("ConnectionStrings__Database", database)
-    .WithReference(database)
-    .WaitFor(database);
+    .WithReference(database, "Database")
+    .WaitFor(database)
+    .WaitForCompletion(migrations);
 
 await builder.Build().RunAsync();

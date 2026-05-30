@@ -1,7 +1,6 @@
 ﻿using Application;
 using HealthChecks.UI.Client;
 using Infrastructure;
-using Infrastructure.Seeding;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Web.GraphQLApi;
@@ -44,12 +43,6 @@ builder.Services
 WebApplication app = builder.Build();
 
 app.MapDefaultEndpoints();
-
-if (app.Environment.IsDevelopment())
-{
-    app.ApplyMigrations();
-    DataSeeder.SeedData(app.Services);
-}
 
 app.MapGraphQL()
     .WithOptions(o => o.Tool.Enable = app.Environment.IsDevelopment());
