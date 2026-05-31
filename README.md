@@ -130,69 +130,100 @@ Both APIs implement the same set of operations so they can be compared on equal 
 The domain is a small **online shop**: customers place orders for products, and products are supplied by suppliers and tracked as stock items.
 
 ```mermaid
-classDiagram
-    direction LR
-
-    class Category {
-        Guid Id
-        string Name
-        Guid? ParentCategoryId
+erDiagram
+    customers {
+        uuid id PK
+        string name
+        string email
     }
 
-    class Product {
-        Guid Id
-        string Name
-        string Sku
-        decimal Price
-        Guid CategoryId
+    address {
+        uuid id PK
+        uuid customer_id FK
+        string street
+        string city
+        string postal_code
+        string country
     }
 
-    class Supplier {
-        Guid Id
-        string Name
-        string ContactEmail
+    orders {
+        uuid id PK
+        uuid customer_id FK
+        string status
+        datetime placed_at
+        decimal total
+        datetime valid_from
+        datetime valid_to
     }
 
-    class StockItem {
-        Guid Id
-        int QuantityOnHand
-        int ReorderLevel
+    order_lines {
+        uuid id PK
+        uuid order_id FK
+        uuid product_id FK
+        int quantity
+        decimal unit_price_at_order
     }
 
-    class Customer {
-        Guid Id
-        string Name
-        string Email
+    products {
+        uuid id PK
+        string name
+        string sku
+        string description
+        decimal price
+        uuid category_id FK
+        datetime valid_from
+        datetime valid_to
     }
 
-    class Address {
-        Guid Id
-        string Street
-        string City
-        string Country
+    categories {
+        uuid id PK
+        string name
+        uuid parent_category_id FK
     }
 
-    class Order {
-        Guid Id
-        OrderStatus Status
-        DateTime PlacedAt
-        decimal Total
+    stock_items {
+        uuid id PK
+        uuid product_id FK
+        uuid supplier_id FK
+        int quantity_on_hand
+        int reorder_level
+        datetime valid_from
+        datetime valid_to
     }
 
-    class OrderLine {
-        Guid Id
-        int Quantity
-        decimal UnitPriceAtOrder
+    suppliers {
+        uuid id PK
+        string name
+        string contact_email
+        string contact_phone
     }
 
-    Category "1" --> "*" Product : contains
-    Category "0..1" --> "*" Category : parent / subcategories
-    Product "1" --> "*" StockItem : has stock
-    Supplier "1" --> "*" StockItem : supplies
-    Customer "1" --> "*" Address : has
-    Customer "1" --> "*" Order : places
-    Order "1" --> "*" OrderLine : contains
-    OrderLine "*" --> "1" Product : refers to
+    supply_orders {
+        uuid id PK
+        uuid supplier_id FK
+        string status
+        datetime created_at
+        datetime received_at
+    }
+
+    supply_order_line {
+        uuid id PK
+        uuid supply_order_id FK
+        uuid product_id FK
+        int quantity
+    }
+
+    customers ||--o{ address : has
+    customers ||--o{ orders : places
+    orders ||--o{ order_lines : contains
+    products ||--o{ order_lines : appears_in
+    categories ||--o{ products : contains
+    categories ||--o{ categories : parent_of
+    products ||--o{ stock_items : has_stock
+    suppliers ||--o{ stock_items : supplies
+    suppliers ||--o{ supply_orders : receives
+    supply_orders ||--o{ supply_order_line : contains
+    products ||--o{ supply_order_line : ordered_as_supply
 ```
 
 This shape was chosen on purpose: it contains naturally **nested data** (`Order → Customer → Addresses`, `Order → OrderLines → Product → Category`), which is exactly the kind of data where REST and GraphQL behave very differently.
