@@ -93,8 +93,8 @@ using (HttpClient client = CreateClient())
 
 await WaitForReady();
 
-// ─── Scenario 4: N+1 list ───────────────────────────────────────────────────
-Console.WriteLine("\n[Benchmark] ═══ Scenario 4: N+1 List ═══");
+// ─── Scenario 4: Product list ───────────────────────────────────────────────────
+Console.WriteLine("\n[Benchmark] ═══ Scenario 4: Product List ═══");
 
 using (HttpClient probe = new())
 {
@@ -103,16 +103,16 @@ using (HttpClient probe = new())
     testReq.Content = new StringContent(testBody, System.Text.Encoding.UTF8, "application/json");
     using HttpResponseMessage testResp = await probe.SendAsync(testReq);
     string body = await testResp.Content.ReadAsStringAsync();
-    Console.WriteLine($"[Benchmark] N+1 GraphQL probe: {testResp.StatusCode} — {body[..Math.Min(300, body.Length)]}");
+    Console.WriteLine($"[Benchmark] Product GraphQL probe: {testResp.StatusCode} — {body[..Math.Min(300, body.Length)]}");
 }
 
 using (HttpClient client = CreateClient())
 {
     NBomberRunner
         .RegisterScenarios(
-            NPlus1ListScenario.RestScenario(client).WithLoadSimulations(ReadLoad()),
-            NPlus1ListScenario.GraphQLScenario(client).WithLoadSimulations(ReadLoad()))
-        .WithReportFolder("reports/4_n_plus_1")
+            ProductListScenario.RestScenario(client).WithLoadSimulations(ReadLoad()),
+            ProductListScenario.GraphQLScenario(client).WithLoadSimulations(ReadLoad()))
+        .WithReportFolder("reports/4_product_list")
         .Run();
 }
 

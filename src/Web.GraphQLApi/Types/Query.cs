@@ -19,8 +19,20 @@ public class Query
 
     [UseFiltering]
     [UseSorting]
-    public IQueryable<Product> GetProductsWithDetails([Service] IApplicationDbContext dbContext) =>
-        dbContext.Products.AsNoTracking();
+    public IQueryable<Product> GetProductsWithDetails(
+    [Service] IApplicationDbContext dbContext,
+    int page = 1,
+    int pageSize = 50)
+    {
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        return dbContext.Products
+            .AsNoTracking()
+            .OrderBy(p => p.Name)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize);
+    }
 
     [UseProjection]
     [UseFiltering]
