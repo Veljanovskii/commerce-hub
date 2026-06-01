@@ -428,6 +428,21 @@ This is the scenario most stressful for GraphQL: returning a *list* of items, wh
 
 **Observations.** This is the most dramatic gap in the whole study. On the typical request, GraphQL is "only" ~2× slower (24.59 ms vs 13.50 ms), but the **tail collapses**: by `p95` GraphQL is **~62× slower** (4.5 s vs 73 ms). Even though DataLoaders successfully batch the database calls, GraphQL still has to evaluate the resolver tree for every product, run the configured filtering/projection middleware, and serialise a much larger JSON document (~47 % bigger than REST's). Under sustained load these per-item costs accumulate and dominate. REST's "single SQL query → single flat JSON" approach turns out to be the much better fit for large lists, even at the price of some over-fetching.
 
+### Scenario 4 — Paged product list
+
+This scenario represents a common product listing screen. Both APIs return the first page of products using the same pagination parameters (`page = 1`, `pageSize = 50`) and approximately the same logical response shape: product id, name, SKU, description, price and category information.The purpose of this scenario is to compare how REST and GraphQL behave when returning a moderately sized list of items from a larger dataset.
+
+| Metric | REST | GraphQL |
+|---|---:|---:|
+| Mean latency | 75.89 ms | **19.05 ms** |
+| p50 | 9.46 ms | **7.99 ms** |
+| p95 | 354.30 ms | **72.45 ms** |
+| p99 | 544.26 ms | **154.37 ms** |
+| Max | 691.32 ms | **287.62 ms** |
+| Payload / req | **13.598 KB** | 14.016 KB |
+
+**Observations.** GraphQL has slightly larger payload due to the standard GraphQL response envelope and nested JSON structure, but it performs better across all measured latency percentiles. This suggests that, for this particular paged list query, the GraphQL execution pipeline and generated database query behave more efficiently than the REST implementation. The result should not be interpreted as a general statement that GraphQL is faster for lists, but as evidence that implementation details such as projection, query shape, serialization and pagination strategy can matter more than the API style alone.
+
 ### Scenario 5 — Write + read-back (place an order, then fetch it)
 
 A more realistic mixed workload: each iteration **places a new order** (`POST /orders` or `mutation placeOrder`) and then **fetches it back** (`GET /orders/{id}` or `query orderById`). This scenario uses a lighter load (5 req/s) because every iteration also writes to PostgreSQL.
