@@ -130,69 +130,100 @@ Both APIs implement the same set of operations so they can be compared on equal 
 The domain is a small **online shop**: customers place orders for products, and products are supplied by suppliers and tracked as stock items.
 
 ```mermaid
-classDiagram
-    direction LR
-
-    class Category {
-        Guid Id
-        string Name
-        Guid? ParentCategoryId
+erDiagram
+    customers {
+        uuid id PK
+        string name
+        string email
     }
 
-    class Product {
-        Guid Id
-        string Name
-        string Sku
-        decimal Price
-        Guid CategoryId
+    address {
+        uuid id PK
+        uuid customer_id FK
+        string street
+        string city
+        string postal_code
+        string country
     }
 
-    class Supplier {
-        Guid Id
-        string Name
-        string ContactEmail
+    orders {
+        uuid id PK
+        uuid customer_id FK
+        string status
+        datetime placed_at
+        decimal total
+        datetime valid_from
+        datetime valid_to
     }
 
-    class StockItem {
-        Guid Id
-        int QuantityOnHand
-        int ReorderLevel
+    order_lines {
+        uuid id PK
+        uuid order_id FK
+        uuid product_id FK
+        int quantity
+        decimal unit_price_at_order
     }
 
-    class Customer {
-        Guid Id
-        string Name
-        string Email
+    products {
+        uuid id PK
+        string name
+        string sku
+        string description
+        decimal price
+        uuid category_id FK
+        datetime valid_from
+        datetime valid_to
     }
 
-    class Address {
-        Guid Id
-        string Street
-        string City
-        string Country
+    categories {
+        uuid id PK
+        string name
+        uuid parent_category_id FK
     }
 
-    class Order {
-        Guid Id
-        OrderStatus Status
-        DateTime PlacedAt
-        decimal Total
+    stock_items {
+        uuid id PK
+        uuid product_id FK
+        uuid supplier_id FK
+        int quantity_on_hand
+        int reorder_level
+        datetime valid_from
+        datetime valid_to
     }
 
-    class OrderLine {
-        Guid Id
-        int Quantity
-        decimal UnitPriceAtOrder
+    suppliers {
+        uuid id PK
+        string name
+        string contact_email
+        string contact_phone
     }
 
-    Category "1" --> "*" Product : contains
-    Category "0..1" --> "*" Category : parent / subcategories
-    Product "1" --> "*" StockItem : has stock
-    Supplier "1" --> "*" StockItem : supplies
-    Customer "1" --> "*" Address : has
-    Customer "1" --> "*" Order : places
-    Order "1" --> "*" OrderLine : contains
-    OrderLine "*" --> "1" Product : refers to
+    supply_orders {
+        uuid id PK
+        uuid supplier_id FK
+        string status
+        datetime created_at
+        datetime received_at
+    }
+
+    supply_order_line {
+        uuid id PK
+        uuid supply_order_id FK
+        uuid product_id FK
+        int quantity
+    }
+
+    customers ||--o{ address : has
+    customers ||--o{ orders : places
+    orders ||--o{ order_lines : contains
+    products ||--o{ order_lines : appears_in
+    categories ||--o{ products : contains
+    categories ||--o{ categories : parent_of
+    products ||--o{ stock_items : has_stock
+    suppliers ||--o{ stock_items : supplies
+    suppliers ||--o{ supply_orders : receives
+    supply_orders ||--o{ supply_order_line : contains
+    products ||--o{ supply_order_line : ordered_as_supply
 ```
 
 This shape was chosen on purpose: it contains naturally **nested data** (`Order → Customer → Addresses`, `Order → OrderLines → Product → Category`), which is exactly the kind of data where REST and GraphQL behave very differently.
@@ -396,6 +427,21 @@ This is the scenario most stressful for GraphQL: returning a *list* of items, wh
 | Payload / req | **13.432 KB** | 19.712 KB |
 
 **Observations.** This is the most dramatic gap in the whole study. On the typical request, GraphQL is "only" ~2× slower (24.59 ms vs 13.50 ms), but the **tail collapses**: by `p95` GraphQL is **~62× slower** (4.5 s vs 73 ms). Even though DataLoaders successfully batch the database calls, GraphQL still has to evaluate the resolver tree for every product, run the configured filtering/projection middleware, and serialise a much larger JSON document (~47 % bigger than REST's). Under sustained load these per-item costs accumulate and dominate. REST's "single SQL query → single flat JSON" approach turns out to be the much better fit for large lists, even at the price of some over-fetching.
+
+### Scenario 4 — Paged product list
+
+This scenario represents a common product listing screen. Both APIs return the first page of products using the same pagination parameters (`page = 1`, `pageSize = 50`) and approximately the same logical response shape: product id, name, SKU, description, price and category information.The purpose of this scenario is to compare how REST and GraphQL behave when returning a moderately sized list of items from a larger dataset.
+
+| Metric | REST | GraphQL |
+|---|---:|---:|
+| Mean latency | 75.89 ms | **19.05 ms** |
+| p50 | 9.46 ms | **7.99 ms** |
+| p95 | 354.30 ms | **72.45 ms** |
+| p99 | 544.26 ms | **154.37 ms** |
+| Max | 691.32 ms | **287.62 ms** |
+| Payload / req | **13.598 KB** | 14.016 KB |
+
+**Observations.** GraphQL has slightly larger payload due to the standard GraphQL response envelope and nested JSON structure, but it performs better across all measured latency percentiles. This suggests that, for this particular paged list query, the GraphQL execution pipeline and generated database query behave more efficiently than the REST implementation. The result should not be interpreted as a general statement that GraphQL is faster for lists, but as evidence that implementation details such as projection, query shape, serialization and pagination strategy can matter more than the API style alone.
 
 ### Scenario 5 — Write + read-back (place an order, then fetch it)
 
