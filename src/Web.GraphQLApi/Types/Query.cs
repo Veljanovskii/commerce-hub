@@ -17,6 +17,7 @@ public class Query
     public IQueryable<Product> GetProducts([Service] IApplicationDbContext dbContext) =>
         dbContext.Products.AsNoTracking();
 
+    [UseProjection]
     [UseFiltering]
     [UseSorting]
     public IQueryable<Product> GetProductsWithDetails(
@@ -52,10 +53,6 @@ public class Query
         CancellationToken cancellationToken) =>
         await dbContext.Products
             .AsNoTracking()
-            .Include(p => p.Category)
-                .ThenInclude(c => c.ParentCategory)
-            .Include(p => p.StockItems)
-                .ThenInclude(s => s.Supplier)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
     public async Task<Order?> GetOrderById(
@@ -65,10 +62,7 @@ public class Query
         await dbContext.Orders
             .AsNoTracking()
             .Include(o => o.Customer)
-                .ThenInclude(c => c.Addresses)
             .Include(o => o.OrderLines)
-                .ThenInclude(l => l.Product)
-                    .ThenInclude(p => p.Category)
             .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
 
     public async Task<string?> GetOrderStatus(

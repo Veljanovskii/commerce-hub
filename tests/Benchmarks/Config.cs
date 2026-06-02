@@ -5,8 +5,8 @@ namespace Benchmarks;
 
 public static class Config
 {
-    public static string RestBaseUrl { get; set; } = "http://localhost:5000";
-    public static string GraphQLBaseUrl { get; set; } = "http://localhost:5001";
+    public static string RestBaseUrl { get; set; } = "http://localhost:5269";
+    public static string GraphQLBaseUrl { get; set; } = "http://localhost:5288";
     public static string ProductId { get; set; } = "";
     public static string OrderId { get; set; } = "";
     public static string CustomerId { get; set; } = "";

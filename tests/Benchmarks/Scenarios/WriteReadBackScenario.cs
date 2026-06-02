@@ -28,7 +28,7 @@ public static class WriteReadBackScenario
             if (!placeResponse.IsError)
             {
                 string responseBody = await placeResponse.Payload.Value.Content.ReadAsStringAsync();
-                using JsonDocument doc = JsonDocument.Parse(responseBody);
+                using var doc = JsonDocument.Parse(responseBody);
                 string orderId = doc.RootElement.GetProperty("id").GetString()!;
 
                 // Read back
@@ -42,13 +42,34 @@ public static class WriteReadBackScenario
     public static ScenarioProps GraphQLScenario(HttpClient client) =>
         Scenario.Create("graphql_write_read", async context =>
         {
-            // Place order mutation
+            // Place order mutation — returns only the id, mirroring REST's POST /orders response.
             string mutation = $$"""
-                {"query":"mutation { placeOrder(input: { customerId: \"{{Config.CustomerId}}\", lines: [{ productId: \"{{Config.ProductId}}\", quantity: 1 }, { productId: \"{{Config.SecondProductId}}\", quantity: 2 }] }) { id status total orderLines { productId quantity unitPriceAtOrder } } }"}
+                {"query":"mutation { placeOrder(input: { customerId: \"{{Config.CustomerId}}\", lines: [{ productId: \"{{Config.ProductId}}\", quantity: 1 }, { productId: \"{{Config.SecondProductId}}\", quantity: 2 }] }) { id } }"}
                 """;
             HttpRequestMessage placeRequest = Http.CreateRequest("POST", $"{Config.GraphQLBaseUrl}/graphql")
                 .WithHeader("Content-Type", "application/json")
                 .WithBody(new StringContent(mutation.Trim(), System.Text.Encoding.UTF8, "application/json"));
-            return await Http.Send(client, placeRequest);
+            Response<HttpResponseMessage> placeResponse = await Http.Send(client, placeRequest);
+
+            if (!placeResponse.IsError)
+            {
+                string responseBody = await placeResponse.Payload.Value.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(responseBody);
+                string orderId = doc.RootElement
+                    .GetProperty("data")
+                    .GetProperty("placeOrder")
+                    .GetProperty("id")
+                    .GetString()!;
+
+                string readQuery = $$"""
+                    {"query":"{ orderById(id: \"{{orderId}}\") { id customerId status placedAt total customer { name email } orderLines { id productId quantity unitPriceAtOrder product { name sku } } } }"}
+                    """;
+                HttpRequestMessage readRequest = Http.CreateRequest("POST", $"{Config.GraphQLBaseUrl}/graphql")
+                    .WithHeader("Content-Type", "application/json")
+                    .WithBody(new StringContent(readQuery.Trim(), System.Text.Encoding.UTF8, "application/json"));
+                return await Http.Send(client, readRequest);
+            }
+
+            return placeResponse;
         });
 }

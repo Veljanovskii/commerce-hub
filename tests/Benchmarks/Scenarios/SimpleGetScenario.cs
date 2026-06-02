@@ -16,7 +16,7 @@ public static class SimpleGetScenario
     public static ScenarioProps GraphQLScenario(HttpClient client) =>
         Scenario.Create("graphql_simple_get", async context =>
         {
-            string body = $$"""{"query":"{ productById(id: \"{{Config.ProductId}}\") { id name sku description price categoryId } }"}""";
+            string body = $$"""{"query":"{ productById(id: \"{{Config.ProductId}}\") { id name sku description price categoryId category { name } } }"}""";
             HttpRequestMessage request = Http.CreateRequest("POST", $"{Config.GraphQLBaseUrl}/graphql")
                 .WithHeader("Content-Type", "application/json")
                 .WithBody(new StringContent(body, System.Text.Encoding.UTF8, "application/json"));

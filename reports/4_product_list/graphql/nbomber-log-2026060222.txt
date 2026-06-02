@@ -1,0 +1,11 @@
+2026-06-02 22:59:46.974 +02:00 [INF] [ThreadId:18] NBomber 6.4.0 started a new session: 2026-06-02_20-59-46_23b7c78d
+2026-06-02 22:59:46.979 +02:00 [INF] [ThreadId:18] NBomber started as single node
+2026-06-02 22:59:46.979 +02:00 [INF] [ThreadId:18] License validation....
+2026-06-02 22:59:46.980 +02:00 [WRN] [ThreadId:18] THIS VERSION IS FREE ONLY FOR PERSONAL USE. You can't use it for an organization.
+2026-06-02 22:59:46.980 +02:00 [INF] [ThreadId:18] Reports folder: C:\commerce-hub\tests\Benchmarks\bin\Release\net10.0\reports/4_product_list/graphql
+2026-06-02 22:59:46.980 +02:00 [INF] [ThreadId:18] Plugins: no plugins were loaded
+2026-06-02 22:59:46.980 +02:00 [INF] [ThreadId:18] Reporting sinks: no reporting sinks were loaded
+2026-06-02 22:59:46.981 +02:00 [INF] [ThreadId:18] Starting init...
+2026-06-02 22:59:46.981 +02:00 [INF] [ThreadId:18] Target scenarios: graphql_product_list
+2026-06-02 22:59:46.981 +02:00 [INF] [ThreadId:18] Init finished
+2026-06-02 22:59:46.981 +02:00 [INF] [ThreadId:18] Starting bombing...

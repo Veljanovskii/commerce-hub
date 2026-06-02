@@ -1,6 +1,6 @@
-﻿using System.Text.Json;
-using Benchmarks;
+﻿using Benchmarks;
 using Benchmarks.Scenarios;
+using NBomber.Contracts;
 using NBomber.CSharp;
 
 Config.LoadFromEnv();
@@ -16,17 +16,23 @@ const int readRate = 20;
 const int writeRate = 5;
 const int rampDuration = 20;
 const int sustainDuration = 40;
+const int warmupDuration = 15;
 
-NBomber.Contracts.LoadSimulation[] ReadLoad() =>
+LoadSimulation[] ReadLoad() =>
 [
     Simulation.RampingInject(rate: readRate, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromSeconds(rampDuration)),
     Simulation.Inject(rate: readRate, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromSeconds(sustainDuration))
 ];
 
-NBomber.Contracts.LoadSimulation[] WriteLoad() =>
+LoadSimulation[] WriteLoad() =>
 [
     Simulation.RampingInject(rate: writeRate, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromSeconds(rampDuration)),
     Simulation.Inject(rate: writeRate, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromSeconds(sustainDuration))
+];
+
+LoadSimulation[] WarmupLoad() =>
+[
+    Simulation.Inject(rate: readRate, interval: TimeSpan.FromSeconds(1), during: TimeSpan.FromSeconds(warmupDuration))
 ];
 
 HttpClient CreateClient() => new(new SocketsHttpHandler
@@ -48,17 +54,58 @@ async Task WaitForReady()
     catch { }
 }
 
-// ─── Scenario 1: Simple GET ─────────────────────────────────────────────────
-Console.WriteLine("\n[Benchmark] ═══ Scenario 1: Simple GET ═══");
-using (HttpClient client = CreateClient())
+async Task RunIsolatedAsync(
+    string reportFolder,
+    Func<HttpClient, ScenarioProps> restScenario,
+    Func<HttpClient, ScenarioProps> graphQLScenario,
+    LoadSimulation[] load)
 {
+    using (HttpClient restClient = CreateClient())
+    {
+        NBomberRunner
+            .RegisterScenarios(restScenario(restClient).WithLoadSimulations(load))
+            .WithReportFolder($"{reportFolder}/rest")
+            .Run();
+    }
+
+    await WaitForReady();
+
+    using HttpClient graphQLClient = CreateClient();
     NBomberRunner
-        .RegisterScenarios(
-            SimpleGetScenario.RestScenario(client).WithLoadSimulations(ReadLoad()),
-            SimpleGetScenario.GraphQLScenario(client).WithLoadSimulations(ReadLoad()))
-        .WithReportFolder("reports/1_simple_get")
+        .RegisterScenarios(graphQLScenario(graphQLClient).WithLoadSimulations(load))
+        .WithReportFolder($"{reportFolder}/graphql")
         .Run();
 }
+
+// ─── Warmup (discarded) ─────────────────────────────────────────────────────
+// Drives both APIs before any measured scenario to absorb cold-start JIT compilation
+// and EF Core query-plan compilation. Reports are disabled so these numbers never count.
+Console.WriteLine("\n[Benchmark] ═══ Warmup (discarded) ═══");
+using (HttpClient warmupClient = CreateClient())
+{
+    NBomberRunner
+        .RegisterScenarios(SimpleGetScenario.RestScenario(warmupClient).WithLoadSimulations(WarmupLoad()))
+        .WithoutReports()
+        .Run();
+}
+
+using (HttpClient warmupClient = CreateClient())
+{
+    NBomberRunner
+        .RegisterScenarios(SimpleGetScenario.GraphQLScenario(warmupClient).WithLoadSimulations(WarmupLoad()))
+        .WithoutReports()
+        .Run();
+}
+
+await WaitForReady();
+
+// ─── Scenario 1: Simple GET ─────────────────────────────────────────────────
+Console.WriteLine("\n[Benchmark] ═══ Scenario 1: Simple GET ═══");
+await RunIsolatedAsync(
+    "reports/1_simple_get",
+    SimpleGetScenario.RestScenario,
+    SimpleGetScenario.GraphQLScenario,
+    ReadLoad());
 
 await WaitForReady();
 
@@ -66,55 +113,32 @@ await WaitForReady();
 if (!string.IsNullOrEmpty(Config.OrderId))
 {
     Console.WriteLine("\n[Benchmark] ═══ Scenario 2: Deep Graph Fetch ═══");
-    using (HttpClient client = CreateClient())
-    {
-        NBomberRunner
-            .RegisterScenarios(
-                DeepGraphScenario.RestScenario(client).WithLoadSimulations(ReadLoad()),
-                DeepGraphScenario.GraphQLScenario(client).WithLoadSimulations(ReadLoad()))
-            .WithReportFolder("reports/2_deep_graph")
-            .Run();
-    }
+    await RunIsolatedAsync(
+        "reports/2_deep_graph",
+        DeepGraphScenario.RestScenario,
+        DeepGraphScenario.GraphQLScenario,
+        ReadLoad());
 
     await WaitForReady();
 }
 
 // ─── Scenario 3: Over-fetch ─────────────────────────────────────────────────
 Console.WriteLine("\n[Benchmark] ═══ Scenario 3: Over-fetch ═══");
-using (HttpClient client = CreateClient())
-{
-    NBomberRunner
-        .RegisterScenarios(
-            OverFetchScenario.RestScenario(client).WithLoadSimulations(ReadLoad()),
-            OverFetchScenario.GraphQLScenario(client).WithLoadSimulations(ReadLoad()))
-        .WithReportFolder("reports/3_overfetch")
-        .Run();
-}
+await RunIsolatedAsync(
+    "reports/3_overfetch",
+    OverFetchScenario.RestScenario,
+    OverFetchScenario.GraphQLScenario,
+    ReadLoad());
 
 await WaitForReady();
 
-// ─── Scenario 4: Product list ───────────────────────────────────────────────────
+// ─── Scenario 4: Product list ───────────────────────────────────────────────
 Console.WriteLine("\n[Benchmark] ═══ Scenario 4: Product List ═══");
-
-using (HttpClient probe = new())
-{
-    string testBody = """{"query":"{ productsWithDetails { id name sku price category { id name } stockItems { supplierId supplier { id name } quantityOnHand } } }"}""";
-    using HttpRequestMessage testReq = new(HttpMethod.Post, $"{Config.GraphQLBaseUrl}/graphql");
-    testReq.Content = new StringContent(testBody, System.Text.Encoding.UTF8, "application/json");
-    using HttpResponseMessage testResp = await probe.SendAsync(testReq);
-    string body = await testResp.Content.ReadAsStringAsync();
-    Console.WriteLine($"[Benchmark] Product GraphQL probe: {testResp.StatusCode} — {body[..Math.Min(300, body.Length)]}");
-}
-
-using (HttpClient client = CreateClient())
-{
-    NBomberRunner
-        .RegisterScenarios(
-            ProductListScenario.RestScenario(client).WithLoadSimulations(ReadLoad()),
-            ProductListScenario.GraphQLScenario(client).WithLoadSimulations(ReadLoad()))
-        .WithReportFolder("reports/4_product_list")
-        .Run();
-}
+await RunIsolatedAsync(
+    "reports/4_product_list",
+    ProductListScenario.RestScenario,
+    ProductListScenario.GraphQLScenario,
+    ReadLoad());
 
 await WaitForReady();
 
@@ -122,13 +146,11 @@ await WaitForReady();
 if (!string.IsNullOrEmpty(Config.CustomerId) && !string.IsNullOrEmpty(Config.SecondProductId))
 {
     Console.WriteLine("\n[Benchmark] ═══ Scenario 5: Write + Read-back ═══");
-    using HttpClient client = CreateClient();
-    NBomberRunner
-        .RegisterScenarios(
-            WriteReadBackScenario.RestScenario(client).WithLoadSimulations(WriteLoad()),
-            WriteReadBackScenario.GraphQLScenario(client).WithLoadSimulations(WriteLoad()))
-        .WithReportFolder("reports/5_write_read")
-        .Run();
+    await RunIsolatedAsync(
+        "reports/5_write_read",
+        WriteReadBackScenario.RestScenario,
+        WriteReadBackScenario.GraphQLScenario,
+        WriteLoad());
 }
 
 Console.WriteLine("\n[Benchmark] All scenarios complete. Reports in ./reports/");

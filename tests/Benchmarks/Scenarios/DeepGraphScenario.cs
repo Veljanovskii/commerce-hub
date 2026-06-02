@@ -17,7 +17,7 @@ public static class DeepGraphScenario
         Scenario.Create("graphql_deep_graph", async context =>
         {
             string body = $$"""
-                {"query":"{ orderById(id: \"{{Config.OrderId}}\") { id status placedAt total customer { id name email addresses { street city postalCode country } } orderLines { id quantity unitPriceAtOrder product { id name sku price category { id name parentCategory { id name } } } } } }"}
+                {"query":"{ orderById(id: \"{{Config.OrderId}}\") { id customerId status placedAt total customer { name email } orderLines { id productId quantity unitPriceAtOrder product { name sku } } } }"}
                 """;
             HttpRequestMessage request = Http.CreateRequest("POST", $"{Config.GraphQLBaseUrl}/graphql")
                 .WithHeader("Content-Type", "application/json")

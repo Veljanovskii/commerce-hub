@@ -351,6 +351,8 @@ Benchmarks are written with **[NBomber](https://nbomber.com/)**, a .NET load-tes
 
 Five scenarios were chosen to cover the situations where REST and GraphQL are expected to behave most differently. Each scenario was run for **60 seconds** under the same load profile: a **20-second ramp-up to 20 requests/second**, followed by a **40-second hold at 20 requests/second**, producing **990 requests per API per scenario** (scenario 5 uses a lighter 5 req/s profile because it writes to the database, for **250 requests per API**).
 
+To keep the comparison clean, REST and GraphQL are run in **separate, isolated passes** (one after the other, each with its own connection pool) rather than concurrently, so the two APIs never contend for the database or the load generator at the same time. A short **discarded warm-up run** precedes the measured scenarios to absorb JIT and EF Core query-plan compilation, so the numbers below reflect steady-state behaviour rather than cold start.
+
 The numbers below come directly from the NBomber reports. All scenarios completed with **0 failures** for both APIs.
 
 ### Understanding the metrics
@@ -371,106 +373,91 @@ Before diving into the numbers, here is a short, jargon-free explanation of what
 
 ### Scenario 1 — Simple GET (single product by id)
 
-The most basic operation: ask for one product and return it. This is the *baseline* of per-request overhead — there is almost no work to do, so anything we see here is the cost of the API style itself (HTTP parsing for REST, plus query parsing and validation for GraphQL).
+The most basic operation: ask for one product and return it. This is the *baseline* of per-request overhead — there is almost no work to do, so anything we see here is the cost of the API style itself (HTTP parsing for REST, plus query parsing and validation for GraphQL). Both APIs return the **same fields** (id, name, SKU, description, price, category id and category name), so the payloads differ only by the GraphQL envelope.
 
 | Metric | REST | GraphQL |
 |---|---:|---:|
-| Mean latency | **20.63 ms** | 43.00 ms |
-| p50 | **7.97 ms** | 9.14 ms |
-| p95 | **70.78 ms** | 91.52 ms |
-| p99 | **170.24 ms** | 1 744.90 ms |
-| Max | 1 874.89 ms | 2 381.72 ms |
-| Payload / req | **0.523 KB** | 0.686 KB |
+| Mean latency | **4.70 ms** | 7.28 ms |
+| p50 | **4.37 ms** | 7.02 ms |
+| p95 | **6.69 ms** | 9.66 ms |
+| p99 | **10.83 ms** | 14.18 ms |
+| Max | **40.60 ms** | 47.10 ms |
+| Payload / req | **0.528 KB** | 0.739 KB |
 
-**Observations.** On the typical request (`p50`) the two APIs are almost identical (~1 ms apart), but the **tail latency** of GraphQL is far worse — at `p99` GraphQL is roughly **10× slower** than REST. The GraphQL response is also ~31 % larger because of the wrapping `{"data": {...}}` envelope. This matches the expectation that GraphQL pays a fixed *per-request* cost (parsing, validating and planning the query) that REST does not.
+**Observations.** REST is faster at every percentile by a consistent ~2–3 ms, and the gap between p50 and p99 is small for *both* APIs (no tail collapse). This is the clean per-request cost of GraphQL — parsing, validating and planning the query — paid on every call. The GraphQL response is also ~40 % larger, almost entirely due to the wrapping `{"data": {...}}` envelope on a tiny body.
 
 ### Scenario 2 — Deep graph fetch (order with customer, lines, products, categories)
 
-This is the scenario where GraphQL is *traditionally said to shine*: one request returns a deeply nested object that would normally require several REST round-trips. To make the comparison fair, the REST API exposes a dedicated endpoint that returns the same nested shape in one go (using EF Core `Include`), so both APIs do it in **a single HTTP call**.
+This is the scenario where GraphQL is *traditionally said to shine*: one request returns a deeply nested object that would normally require several REST round-trips. To make the comparison fair, the REST API exposes a dedicated endpoint that returns the same nested shape in one go (using EF Core `Include`), and the GraphQL query selects the **exact same fields** as the REST DTO (order header, customer name/email, and order lines with product name/SKU) - so both APIs return identical data in **a single HTTP call**.
 
 | Metric | REST | GraphQL |
 |---|---:|---:|
-| Mean latency | **8.70 ms** | 20.12 ms |
-| p50 | **7.44 ms** | 17.97 ms |
-| p95 | **12.19 ms** | 30.02 ms |
-| p99 | **38.94 ms** | 65.54 ms |
-| Max | 243.40 ms | 519.49 ms |
-| Payload / req | **1.063 KB** | 1.993 KB |
+| Mean latency | **4.98 ms** | 8.07 ms |
+| p50 | **4.68 ms** | 6.98 ms |
+| p95 | **6.66 ms** | 10.74 ms |
+| p99 | **10.74 ms** | 30.45 ms |
+| Max | **102.58 ms** | 120.58 ms |
+| Payload / req | **1.078 KB** | 1.348 KB |
 
-**Observations.** REST is consistently ~2–2.5× faster across every percentile, and the response is roughly **half the size**. The reason is two-fold: REST builds the whole result with a single pre-composed SQL JOIN, while GraphQL walks its resolver tree (and triggers DataLoader batches) for each nested field; and the GraphQL JSON envelope adds extra structural overhead per nested object. So the often-quoted "GraphQL wins on nested data" claim only holds when REST is *not* allowed to expose a dedicated nested endpoint — when both APIs are tuned, REST wins this case clearly.
+**Observations.** REST is ~1.6× faster on the typical request and the payload is ~25 % smaller. The difference is two-fold - REST builds the result with a single pre-composed SQL JOIN, while GraphQL walks its resolver tree (and triggers DataLoader batches) for each nested field; and the GraphQL envelope adds structural overhead per nested object. GraphQL's tail (p99) is still ~3× REST's, the cost of per-request planning plus per-field resolution. The often-quoted "GraphQL wins on nested data" claim only holds when REST is *not* allowed a dedicated nested endpoint — when both are tuned and asked for the same data, REST wins this case.
 
 ### Scenario 3 — Over-fetching vs. minimal fetching
 
-The client only needs **two fields** of a product (e.g. `name` and `price`). REST returns the *whole* product DTO regardless (`rest_overfetch`), while GraphQL is told to ask for only the two needed fields (`graphql_minimal_fetch`). This is the textbook case for GraphQL's "ask exactly what you need" promise.
+The client only needs **two fields** of a product (e.g. `name` and `price`). REST returns the *whole* product DTO regardless (`rest_overfetch`), while GraphQL is told to ask for only the two needed fields (`graphql_minimal_fetch`).
 
 | Metric | REST (full DTO) | GraphQL (2 fields) |
 |---|---:|---:|
-| Mean latency | **6.33 ms** | 7.90 ms |
-| p50 | **5.46 ms** | 6.18 ms |
-| p95 | **8.30 ms** | 9.49 ms |
-| p99 | **17.57 ms** | 18.13 ms |
-| Payload / req | 0.523 KB | **0.457 KB** |
+| Mean latency | 4.53 ms | **4.09 ms** |
+| p50 | 4.02 ms | **3.94 ms** |
+| p95 | 6.28 ms | **5.57 ms** |
+| p99 | 14.20 ms | **7.34 ms** |
+| Payload / req | 0.528 KB | **0.460 KB** |
 
-**Observations.** GraphQL **does** transfer less data — about **12.5 % smaller** payload — confirming the over-fetching hypothesis. But the latency story is the opposite: GraphQL is slightly slower at every percentile because the per-request parsing cost more than cancels out the small bandwidth saving. The conclusion is nuanced: GraphQL wins on payload size, but for a *single small object* the difference is too small to matter and the latency cost makes REST the better default unless bandwidth is genuinely scarce.
-
-### Scenario 4 — List with N+1 risk (all products + category + stock + supplier)
-
-This is the scenario most stressful for GraphQL: returning a *list* of items, where every item needs related data (`Category`, `StockItems`, `Supplier`). REST uses a flat, pre-shaped DTO with `Include` calls; GraphQL relies on **DataLoaders** to batch the related lookups and avoid the classic *N+1 problem*. Both still return the same logical data.
-
-| Metric | REST (flat DTO) | GraphQL (DataLoaders) |
-|---|---:|---:|
-| Mean latency | **89.03 ms** | 385.52 ms |
-| p50 | **13.50 ms** | 24.59 ms |
-| p95 | **72.58 ms** | 4 501.50 ms |
-| p99 | **4 378.62 ms** | 5 238.78 ms |
-| Max | 5 266.63 ms | 6 924.52 ms |
-| Payload / req | **13.432 KB** | 19.712 KB |
-
-**Observations.** This is the most dramatic gap in the whole study. On the typical request, GraphQL is "only" ~2× slower (24.59 ms vs 13.50 ms), but the **tail collapses**: by `p95` GraphQL is **~62× slower** (4.5 s vs 73 ms). Even though DataLoaders successfully batch the database calls, GraphQL still has to evaluate the resolver tree for every product, run the configured filtering/projection middleware, and serialise a much larger JSON document (~47 % bigger than REST's). Under sustained load these per-item costs accumulate and dominate. REST's "single SQL query → single flat JSON" approach turns out to be the much better fit for large lists, even at the price of some over-fetching.
+**Observations.** This is the textbook case for GraphQL's "ask exactly what you need" promise, and it delivers on both axes: GraphQL transfers ~13 % less data **and** is faster at every percentile, with a notably tighter tail (p99 7.34 ms vs 14.20 ms). The reason GraphQL now also wins on latency is that the selective query genuinely fetches and materialises less - REST still projects and serialises the full DTO every time. When the client truly needs only a subset of fields, GraphQL's selectivity is a real, measurable advantage.
 
 ### Scenario 4 — Paged product list
 
-This scenario represents a common product listing screen. Both APIs return the first page of products using the same pagination parameters (`page = 1`, `pageSize = 50`) and approximately the same logical response shape: product id, name, SKU, description, price and category information.The purpose of this scenario is to compare how REST and GraphQL behave when returning a moderately sized list of items from a larger dataset.
+This scenario represents a common product listing screen. Both APIs return the first page of products using the same pagination parameters (`page = 1`, `pageSize = 50`) and the same logical response shape: product id, name, SKU, description, price and category name. The GraphQL query uses **server-side projection** (`[UseProjection]`), so HotChocolate emits a column-projected SQL query that mirrors the REST DTO projection instead of materialising full entities, with the category name resolved through a batched DataLoader.
 
 | Metric | REST | GraphQL |
 |---|---:|---:|
-| Mean latency | 75.89 ms | **19.05 ms** |
-| p50 | 9.46 ms | **7.99 ms** |
-| p95 | 354.30 ms | **72.45 ms** |
-| p99 | 544.26 ms | **154.37 ms** |
-| Max | 691.32 ms | **287.62 ms** |
-| Payload / req | **13.598 KB** | 14.016 KB |
+| Mean latency | **5.42 ms** | 9.70 ms |
+| p50 | **5.27 ms** | 8.02 ms |
+| p95 | **7.52 ms** | 12.23 ms |
+| p99 | **8.86 ms** | 67.58 ms |
+| Max | **14.42 ms** | 111.20 ms |
+| Payload / req | **13.553 KB** | 14.016 KB |
 
-**Observations.** GraphQL has slightly larger payload due to the standard GraphQL response envelope and nested JSON structure, but it performs better across all measured latency percentiles. This suggests that, for this particular paged list query, the GraphQL execution pipeline and generated database query behave more efficiently than the REST implementation. The result should not be interpreted as a general statement that GraphQL is faster for lists, but as evidence that implementation details such as projection, query shape, serialization and pagination strategy can matter more than the API style alone.
+**Observations.** Once both sides project the same columns and run in isolation, REST is faster across every percentile - modestly on the typical request (~2.7 ms at p50) but markedly in the tail (p99 8.86 ms vs 67.58 ms). For a 50-item list GraphQL still pays per-item resolver evaluation plus a second batched query for categories, and that overhead shows up as a heavier, more variable tail under sustained load. Payloads are nearly identical (~3 % apart).
 
 ### Scenario 5 — Write + read-back (place an order, then fetch it)
 
-A more realistic mixed workload: each iteration **places a new order** (`POST /orders` or `mutation placeOrder`) and then **fetches it back** (`GET /orders/{id}` or `query orderById`). This scenario uses a lighter load (5 req/s) because every iteration also writes to PostgreSQL.
+A more realistic mixed workload: each iteration **places a new order** and then **fetches it back**. Both APIs now do **two round trips** - REST as `POST /orders` then `GET /orders/{id}`, and GraphQL as a `placeOrder` mutation (returning only the id, like REST's POST) followed by a separate `orderById` query whose selection set matches REST's read-back. This scenario uses a lighter load (5 req/s) because every iteration also writes to PostgreSQL.
 
 | Metric | REST | GraphQL |
 |---|---:|---:|
-| Mean latency | 42.88 ms | **37.96 ms** |
-| p50 | 30.34 ms | **30.22 ms** |
-| p95 | 78.33 ms | **67.84 ms** |
-| p99 | 115.90 ms | **105.34 ms** |
-| Max | 1 145.14 ms | **816.33 ms** |
-| Payload / req | **0.879 KB** | 0.921 KB |
+| Mean latency | **24.14 ms** | 28.55 ms |
+| p50 | **15.82 ms** | 24.05 ms |
+| p95 | **45.57 ms** | 49.41 ms |
+| p99 | 166.27 ms | **137.22 ms** |
+| Max | 870.01 ms | **386.84 ms** |
+| Payload / req | **0.889 KB** | 1.160 KB |
 
-**Observations.** This is the only scenario where **GraphQL is the faster one** at every percentile, although the margin is small (~10–15 %). The likely reason is that the dominant cost here is the database write, which is *identical* for both APIs, so the per-request protocol overhead becomes secondary; and GraphQL's mutation+query in two HTTP calls happens to land slightly better in this particular configuration. Payload sizes are essentially the same. The honest takeaway is **"roughly neutral, with a slight edge to GraphQL on writes"**.
+**Observations.** With both sides writing *and* reading back, REST is faster on the typical request - p50 15.82 ms vs 24.05 ms - and on p95. GraphQL only pulls ahead in the extreme tail (p99 and max), where its more uniform execution avoids REST's occasional large spikes. The dominant cost in this scenario is the database write, which is identical for both APIs, so the protocol overhead is secondary. The honest takeaway is **"roughly comparable on writes, REST slightly ahead on the typical request, GraphQL steadier in the tail"**.
 
 ### Summary of results
 
 | # | Scenario | Faster (latency) | Smaller (payload) | Notes |
 |---|---|---|---|---|
-| 1 | Simple GET | **REST** (×2 mean, ×10 at p99) | **REST** | GraphQL pays a fixed parse/validate cost per request |
-| 2 | Deep graph fetch | **REST** (×2.3 mean) | **REST** (×1.9) | Pre-composed JOIN beats resolver tree when REST is allowed a dedicated endpoint |
-| 3 | Over-fetch vs minimal | REST (small margin) | **GraphQL** (~12 %) | GraphQL wins on bandwidth, loses on latency |
-| 4 | N+1 list | **REST** (×4.3 mean, ×62 at p95) | **REST** (~32 % smaller) | DataLoaders help, but GraphQL still cannot match a flat list endpoint |
-| 5 | Write + read-back | **GraphQL** (~12 % faster) | tie | DB write dominates; protocol overhead becomes secondary |
+| 1 | Simple GET | **REST** (~1.6× mean) | **REST** | Matched fields; GraphQL pays a steady parse/validate cost per request |
+| 2 | Deep graph fetch | **REST** (~1.6× p50) | **REST** (~25 %) | Identical selection set; pre-composed JOIN beats the resolver tree |
+| 3 | Over-fetch vs minimal | **GraphQL** (all percentiles) | **GraphQL** (~13 %) | Selective query does less work once wasteful includes are removed |
+| 4 | Paged list (50 items) | **REST** (~2.7 ms p50, heavier GQL tail) | **REST** (~3 %) | Matched projections; REST's single projected query wins, gap modest |
+| 5 | Write + read-back | **REST** (p50/p95); GraphQL steadier tail | **REST** | Both do write + read-back; DB write dominates |
 
-**Overall conclusion.** Across these five scenarios, **REST (Minimal APIs) was the faster API in four of five tests**, often by a wide margin under load. GraphQL's theoretical advantages — flexible field selection and DataLoader batching — were measurable on payload size in one scenario (over-fetching) and gave a small latency edge in one mixed write/read scenario, but never overturned the latency cost of its per-request query processing. These results suggest GraphQL's strongest justification on this kind of workload is **client-side flexibility** (one schema, many shapes of response), not raw server performance.
+**Overall conclusion.** **REST (Minimal APIs) is the faster API in four of the five scenarios**, usually by a modest and consistent margin. GraphQL wins cleanly in the one scenario built for it (over-fetching), where selecting only the needed fields means genuinely less work and less data. The takeaway is that GraphQL's strongest justification on this kind of workload is **client-side flexibility** (one schema, many response shapes) plus a real edge **when clients fetch narrow subsets of large objects**, rather than raw server performance on fixed-shape responses.
 
-*(The raw NBomber HTML/CSV/JSON output for each run is preserved under `tests/Benchmarks/reports/`.)*
+*(The raw NBomber CSV/Markdown/TXT output for each run is preserved under `reports/`, split into per-scenario `rest/` and `graphql/` sub-folders.)*
 
 ---
 
@@ -479,9 +466,9 @@ A more realistic mixed workload: each iteration **places a new order** (`POST /o
 No benchmark setup is perfect, and the numbers above describe **this specific configuration** — not REST or GraphQL in the abstract. The most important caveats to keep in mind when interpreting them:
 
 - **Single-machine setup.** Both APIs, PostgreSQL and the load generator all run on the same physical machine over `localhost`. There is no real network in between, so the absolute latencies are best-case numbers. On a real network, the *relative* gap between the two APIs would likely shrink (because network round-trip time becomes the dominant cost), but the ordering of the results would not change.
-- **Cold-start effects are included.** Each scenario starts from a fresh, just-booted API process. The first few seconds of every run include JIT compilation, EF Core model warm-up and database connection-pool warm-up. This is partly why the worst percentiles in Scenarios 1 and 4 look so much worse than the typical case — a few early requests pay startup costs that all later requests do not.
+- **Cold start is excluded by a warm-up.** A discarded warm-up run precedes the measured scenarios, and REST/GraphQL run in separate passes, so JIT, EF Core model warm-up and connection-pool warm-up no longer pollute the first measured requests. Absolute numbers still reflect a freshly started process, just past its warm-up.
 - **Small dataset.** The seeded dataset is relatively small (50 products, 20 orders). Effects that only show up on large tables — index-vs-scan trade-offs, large result-set streaming, deep pagination cost — are not exercised here.
-- **REST was given a tuned, dedicated nested endpoint.** Scenarios 2 and 4 deliberately compare *well-designed REST* (with a purpose-built endpoint that returns the whole nested shape in one query) against *out-of-the-box GraphQL*. A naive REST API that required several round-trips would look much worse, and GraphQL's relative advantage would grow.
+- **REST was given a tuned, dedicated nested endpoint.** Scenario 2 deliberately compares *well-designed REST* (a purpose-built endpoint returning the whole nested shape in one query) against GraphQL asked for the same fields. A naive REST API requiring several round-trips would look much worse, and GraphQL's relative advantage would grow.
 - **GraphQL was used with HotChocolate's defaults.** DataLoaders, server-side projections and the filtering/sorting middleware are all enabled. They help in some scenarios and add overhead in others; turning any of them off would shift the results.
 - **No caching layer is in the picture.** Neither output caching (ASP.NET Core), HTTP caching headers, nor GraphQL *persisted queries* / Automatic Persisted Queries are configured. Persisted queries in particular would meaningfully reduce GraphQL's per-request parse cost — i.e. one of the costs that hurts it most in Scenario 1.
 - **No authentication, rate limiting or response compression.** These would add overhead to *both* APIs but are deliberately omitted so the measurement focuses on the API style itself.
@@ -509,16 +496,16 @@ The Aspire Dashboard opens automatically. From it you can reach:
 
 ### 2. Run the benchmarks
 
-In a second terminal, with the AppHost still running:
+In a second terminal, with the AppHost still running, point the benchmark at the **actual HTTP endpoints** the APIs were assigned. Aspire allocates these ports dynamically, so copy the current `web-restapi` and `web-graphqlapi` HTTP URLs from the Aspire Dashboard:
 
 ```powershell
-$env:REST_URL    = "http://localhost:5269"
-$env:GRAPHQL_URL = "http://localhost:5288"
+$env:REST_URL    = "http://localhost:<rest-port>"
+$env:GRAPHQL_URL = "http://localhost:<graphql-port>"
 
 dotnet run --project tests/Benchmarks -c Release
 ```
 
-NBomber writes HTML, CSV and JSON reports into `tests/Benchmarks/reports/`.
+NBomber runs REST and GraphQL in isolated passes and writes HTML, CSV, Markdown and TXT reports into per-scenario `reports/<n>_<scenario>/{rest,graphql}/` folders.
 
 ### 3. Build the comparison report
 
