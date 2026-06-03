@@ -451,7 +451,7 @@ A more realistic mixed workload: each iteration **places a new order** and then 
 ### Summary of results
 
 | # | Scenario | Faster (latency) | Smaller (payload) | Notes |
-|---|---|---|---|
+|---|---|---|---|---|
 | 1 | Simple GET | **REST** (~1.6× mean) | **REST** | Matched fields; GraphQL pays a steady parse/validate cost per request |
 | 2 | Deep graph fetch | **REST** (~1.6× p50) | **REST** (~25 %) | Identical selection set; pre-composed JOIN beats the resolver tree |
 | 3 | Over-fetch vs minimal | **GraphQL** (all percentiles) | **GraphQL** (~13 %) | Selective query does less work once wasteful includes are removed |
@@ -510,14 +510,6 @@ dotnet run --project tests/Benchmarks -c Release
 ```
 
 NBomber runs REST and GraphQL in isolated passes and writes HTML, CSV, Markdown and TXT reports into per-scenario `reports/<n>_<scenario>/{rest,graphql}/` folders.
-
-### 3. Build the comparison report
-
-```powershell
-./tools/build-report.ps1
-```
-
-This combines the raw NBomber output into a single `report.md` file.
 
 ---
 
